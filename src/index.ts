@@ -41,26 +41,38 @@ const snapshotTools: Tool[] = [
 
 const resources: Resource[] = [];
 
-async function createServer(): Promise<Server> {
-  return createServerWithTools({
-    name: appConfig.name,
-    version: packageJSON.version,
-    tools: snapshotTools,
-    resources,
-  });
-}
+let authToken: string | undefined = process.env.BROWSER_MCP_AUTH_TOKEN;
 
-/**
- * Note: Tools must be defined *before* calling `createServer` because only declarations are hoisted, not the initializations
- */
 program
+  .option('-t, --token <token>', 'Authentication token (up to 64 characters)')
   .version("Version " + packageJSON.version)
   .name(packageJSON.name)
-  .action(async () => {
-    const server = await createServer();
+  .action(async (options) => {
+    if (options.token) {
+      if (options.token.length > 64) {
+        console.error('Token must be 64 characters or less.');
+        process.exit(1);
+      }
+      authToken = options.token;
+    }
+    if (!authToken) {
+      console.error('Authentication token required. Set via --token or BROWSER_MCP_AUTH_TOKEN.');
+      process.exit(1);
+    }
+    const server = await createServer(authToken);
     setupExitWatchdog(server);
 
     const transport = new StdioServerTransport();
     await server.connect(transport);
   });
 program.parse(process.argv);
+
+async function createServer(authToken: string): Promise<Server> {
+  return createServerWithTools({
+    name: appConfig.name,
+    version: packageJSON.version,
+    tools: snapshotTools,
+    resources,
+    authToken,
+  });
+}

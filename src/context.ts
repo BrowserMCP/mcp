@@ -9,6 +9,7 @@ const noConnectionMessage = `No connection to browser extension. In order to pro
 
 export class Context {
   private _ws: WebSocket | undefined;
+  private _authenticated: boolean = false;
 
   get ws(): WebSocket {
     if (!this._ws) {
@@ -23,6 +24,14 @@ export class Context {
 
   hasWs(): boolean {
     return !!this._ws;
+  }
+
+  setAuthenticated(auth: boolean) {
+    this._authenticated = auth;
+  }
+
+  isAuthenticated(): boolean {
+    return this._authenticated;
   }
 
   async sendSocketMessage<T extends MessageType<SocketMessageMap>>(
@@ -48,5 +57,6 @@ export class Context {
       return;
     }
     await this._ws.close();
+    this._authenticated = false;
   }
 }

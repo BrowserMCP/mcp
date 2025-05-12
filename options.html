@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Browser MCP Extension Options</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2em; }
+    label { display: block; margin-top: 1em; }
+    input[type="text"], input[type="number"] { width: 300px; }
+    button { margin-top: 1em; }
+  </style>
+</head>
+<body>
+  <h2>Browser MCP Extension Settings</h2>
+  <form id="options-form">
+    <label>
+      Authentication Token (up to 64 characters):
+      <input type="text" id="token" maxlength="64" required />
+    </label>
+    <label>
+      Port Override (optional):
+      <input type="number" id="port" min="1" max="65535" placeholder="Default: 9234" />
+    </label>
+    <div>
+      <button type="submit">Save</button>
+      <button type="button" id="restore">Restore Defaults</button>
+    </div>
+  </form>
+  <div id="status"></div>
+  <script src="options.js"></script>
+</body>
+</html> 

@@ -12,7 +12,8 @@
     "rootDir": "src",
     "paths": {
       "@/*": ["./src/*"]
-    }
+    },
+    "types": ["chrome"]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules"]
