@@ -14,10 +14,11 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsup src/index.ts --format esm && shx chmod +x dist/*.js",
+    "build": "tsc && tsup src/index.ts --format esm && shx chmod +x dist/*.js",
     "prepare": "npm run build",
     "watch": "tsup src/index.ts --format esm --watch ",
-    "inspector": "CLIENT_PORT=9001 SERVER_PORT=9002 pnpx @modelcontextprotocol/inspector node dist/index.js"
+    "inspector": "CLIENT_PORT=9001 SERVER_PORT=9002 pnpx @modelcontextprotocol/inspector node dist/index.js",
+    "postinstall": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.8.0",
