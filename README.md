@@ -25,7 +25,7 @@ Browser MCP is an MCP server + Chrome extension that allows you to automate your
 
 ## Contributing
 
-This repo contains all the core MCP code for Browser MCP, but currently cannot yet be built on its own due to dependencies on utils and types from the monorepo where it's developed.
+This repo contains all the core MCP code for Browser MCP.
 
 ## Credits
 
