@@ -1,8 +1,19 @@
+import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 import { GetConsoleLogsTool, ScreenshotTool } from "@repo/types/mcp/tool";
 
 import { Tool } from "./tool";
+
+const ScreenshotToolArgs = ScreenshotTool.shape.arguments.extend({
+  fullPage: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      "Whether to capture the full scrollable page instead of just the visible viewport",
+    ),
+});
 
 export const getConsoleLogs: Tool = {
   schema: {
@@ -28,12 +39,13 @@ export const screenshot: Tool = {
   schema: {
     name: ScreenshotTool.shape.name.value,
     description: ScreenshotTool.shape.description.value,
-    inputSchema: zodToJsonSchema(ScreenshotTool.shape.arguments),
+    inputSchema: zodToJsonSchema(ScreenshotToolArgs),
   },
-  handle: async (context, _params) => {
+  handle: async (context, params) => {
+    const { fullPage } = ScreenshotToolArgs.parse(params);
     const screenshot = await context.sendSocketMessage(
       "browser_screenshot",
-      {},
+      { fullPage } as any,
     );
     return {
       content: [
