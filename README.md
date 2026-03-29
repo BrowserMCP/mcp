@@ -16,6 +16,10 @@
 
 Browser MCP is an MCP server + Chrome extension that allows you to automate your browser using AI applications like VS Code, Claude, Cursor, and Windsurf.
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/browsermcp-mcp).
+
 ## Features
 
 - ⚡ Fast: Automation happens locally on your machine, resulting in better performance without network latency.
