@@ -1,0 +1,29 @@
+{
+  "name": "browser-mcp",
+  "version": "0.1.0",
+  "description": "Browser automation MCP server for Codex CLI - control your browser from coding agents",
+  "author": {
+    "name": "BrowserMCP",
+    "url": "https://github.com/BrowserMCP"
+  },
+  "homepage": "https://github.com/BrowserMCP/mcp",
+  "repository": "https://github.com/BrowserMCP/mcp",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "browser",
+    "automation",
+    "puppeteer",
+    "web"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "BrowserMCP",
+    "shortDescription": "Control your browser from Codex via MCP",
+    "longDescription": "Browser MCP is a Model Context Protocol server that allows AI applications to control your browser. Navigate pages, click elements, fill forms, take screenshots, and extract content.",
+    "developerName": "BrowserMCP",
+    "category": "Productivity",
+    "websiteURL": "https://github.com/BrowserMCP/mcp"
+  },
+  "skills": "./skills/"
+}
