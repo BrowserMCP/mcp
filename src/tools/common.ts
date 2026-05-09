@@ -17,6 +17,7 @@ export const navigate: ToolFactory = (snapshot) => ({
     name: NavigateTool.shape.name.value,
     description: NavigateTool.shape.description.value,
     inputSchema: zodToJsonSchema(NavigateTool.shape.arguments),
+    annotations: { destructiveHint: false },
   },
   handle: async (context, params) => {
     const { url } = NavigateTool.shape.arguments.parse(params);
@@ -40,6 +41,7 @@ export const goBack: ToolFactory = (snapshot) => ({
     name: GoBackTool.shape.name.value,
     description: GoBackTool.shape.description.value,
     inputSchema: zodToJsonSchema(GoBackTool.shape.arguments),
+    annotations: { destructiveHint: false },
   },
   handle: async (context) => {
     await context.sendSocketMessage("browser_go_back", {});
@@ -62,6 +64,7 @@ export const goForward: ToolFactory = (snapshot) => ({
     name: GoForwardTool.shape.name.value,
     description: GoForwardTool.shape.description.value,
     inputSchema: zodToJsonSchema(GoForwardTool.shape.arguments),
+    annotations: { destructiveHint: false },
   },
   handle: async (context) => {
     await context.sendSocketMessage("browser_go_forward", {});
@@ -84,6 +87,7 @@ export const wait: Tool = {
     name: WaitTool.shape.name.value,
     description: WaitTool.shape.description.value,
     inputSchema: zodToJsonSchema(WaitTool.shape.arguments),
+    annotations: { readOnlyHint: true },
   },
   handle: async (context, params) => {
     const { time } = WaitTool.shape.arguments.parse(params);
@@ -104,6 +108,7 @@ export const pressKey: Tool = {
     name: PressKeyTool.shape.name.value,
     description: PressKeyTool.shape.description.value,
     inputSchema: zodToJsonSchema(PressKeyTool.shape.arguments),
+    annotations: { destructiveHint: true },
   },
   handle: async (context, params) => {
     const { key } = PressKeyTool.shape.arguments.parse(params);
