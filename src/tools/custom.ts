@@ -9,6 +9,7 @@ export const getConsoleLogs: Tool = {
     name: GetConsoleLogsTool.shape.name.value,
     description: GetConsoleLogsTool.shape.description.value,
     inputSchema: zodToJsonSchema(GetConsoleLogsTool.shape.arguments),
+    annotations: { readOnlyHint: true },
   },
   handle: async (context, _params) => {
     const consoleLogs = await context.sendSocketMessage(
@@ -29,6 +30,7 @@ export const screenshot: Tool = {
     name: ScreenshotTool.shape.name.value,
     description: ScreenshotTool.shape.description.value,
     inputSchema: zodToJsonSchema(ScreenshotTool.shape.arguments),
+    annotations: { readOnlyHint: true },
   },
   handle: async (context, _params) => {
     const screenshot = await context.sendSocketMessage(
