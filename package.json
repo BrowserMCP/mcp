@@ -4,6 +4,10 @@
   "description": "MCP server for browser automation using Browser MCP",
   "author": "Browser MCP",
   "homepage": "https://browsermcp.io",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BrowserMCP/mcp.git"
+  },
   "bugs": "https://github.com/browsermcp/mcp/issues",
   "type": "module",
   "bin": {
