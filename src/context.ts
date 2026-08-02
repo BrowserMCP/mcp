@@ -48,5 +48,6 @@ export class Context {
       return;
     }
     await this._ws.close();
+    this._ws = undefined;
   }
 }
