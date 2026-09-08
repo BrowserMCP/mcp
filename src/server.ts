@@ -35,9 +35,27 @@ export async function createServerWithTools(options: Options): Promise<Server> {
   wss.on("connection", (websocket) => {
     // Close any existing connections
     if (context.hasWs()) {
-      context.ws.close();
+      try {
+        context.ws.close();
+      } catch {}
     }
     context.ws = websocket;
+
+    // Ping heartbeat to keep Chrome MV3 background service worker alive
+    const pingInterval = setInterval(() => {
+      if (websocket.readyState === websocket.OPEN) {
+        websocket.ping();
+      } else {
+        clearInterval(pingInterval);
+      }
+    }, 5000);
+
+    websocket.on("close", () => {
+      clearInterval(pingInterval);
+      if (context.hasWs() && context.ws === websocket) {
+        context.clearWs();
+      }
+    });
   });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -82,8 +100,9 @@ export async function createServerWithTools(options: Options): Promise<Server> {
     return { contents };
   });
 
+  const originalClose = server.close.bind(server);
   server.close = async () => {
-    await server.close();
+    await originalClose();
     await wss.close();
     await context.close();
   };

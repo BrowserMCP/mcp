@@ -17,8 +17,12 @@ export class Context {
     return this._ws;
   }
 
-  set ws(ws: WebSocket) {
+  set ws(ws: WebSocket | undefined) {
     this._ws = ws;
+  }
+
+  clearWs() {
+    this._ws = undefined;
   }
 
   hasWs(): boolean {
@@ -48,5 +52,6 @@ export class Context {
       return;
     }
     await this._ws.close();
+    this._ws = undefined;
   }
 }

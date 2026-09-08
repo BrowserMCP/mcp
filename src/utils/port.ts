@@ -16,12 +16,15 @@ export function killProcessOnPort(port: number) {
   try {
     if (process.platform === "win32") {
       execSync(
-        `FOR /F "tokens=5" %a in ('netstat -ano ^| findstr :${port}') do taskkill /F /PID %a`,
+        `FOR /F "tokens=5" %a in ('netstat -ano ^| findstr :${port}') do taskkill /F /PID %a 2>nul`,
+        { stdio: "ignore" },
       );
     } else {
-      execSync(`lsof -ti:${port} | xargs kill -9`);
+      execSync(`lsof -ti:${port} | xargs kill -9 2>/dev/null`, {
+        stdio: "ignore",
+      });
     }
-  } catch (error) {
-    console.error(`Failed to kill process on port ${port}:`, error);
+  } catch {
+    // Port might not be in use, ignore expected exit code
   }
 }
