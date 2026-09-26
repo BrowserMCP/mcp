@@ -7,11 +7,19 @@ import { isPortInUse, killProcessOnPort } from "@/utils/port";
 
 export async function createWebSocketServer(
   port: number = mcpConfig.defaultWsPort,
+  killExisting: boolean = true,
 ): Promise<WebSocketServer> {
-  killProcessOnPort(port);
-  // Wait until the port is free
-  while (await isPortInUse(port)) {
-    await wait(100);
+  if (killExisting) {
+    killProcessOnPort(port);
+    // Wait until the port is free
+    while (await isPortInUse(port)) {
+      await wait(100);
+    }
+  } else if (await isPortInUse(port)) {
+    throw new Error(
+      `Port ${port} is already in use. Stop the existing Browser MCP server or omit --no-kill-existing to replace it.`,
+    );
   }
+
   return new WebSocketServer({ port });
 }

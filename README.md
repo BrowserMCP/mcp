@@ -23,6 +23,20 @@ Browser MCP is an MCP server + Chrome extension that allows you to automate your
 - 👤 Logged In: Uses your existing browser profile, keeping you logged into all your services.
 - 🥷🏼 Stealth: Avoids basic bot detection and CAPTCHAs by using your real browser fingerprint.
 
+## Command-line options
+
+By default, Browser MCP replaces any process already listening on its browser
+WebSocket port. Pass `--no-kill-existing` to fail instead. This is useful for
+MCP clients that may start more than one server instance while refreshing their
+tool catalog:
+
+```json
+{
+  "command": "npx",
+  "args": ["@browsermcp/mcp@latest", "--no-kill-existing"]
+}
+```
+
 ## Contributing
 
 This repo contains all the core MCP code for Browser MCP, but currently cannot yet be built on its own due to dependencies on utils and types from the monorepo where it's developed.

@@ -41,12 +41,13 @@ const snapshotTools: Tool[] = [
 
 const resources: Resource[] = [];
 
-async function createServer(): Promise<Server> {
+async function createServer(killExistingPortProcess: boolean): Promise<Server> {
   return createServerWithTools({
     name: appConfig.name,
     version: packageJSON.version,
     tools: snapshotTools,
     resources,
+    killExistingPortProcess,
   });
 }
 
@@ -56,8 +57,12 @@ async function createServer(): Promise<Server> {
 program
   .version("Version " + packageJSON.version)
   .name(packageJSON.name)
-  .action(async () => {
-    const server = await createServer();
+  .option(
+    "--no-kill-existing",
+    "fail instead of terminating the process already listening on the browser WebSocket port",
+  )
+  .action(async (options: { killExisting: boolean }) => {
+    const server = await createServer(options.killExisting);
     setupExitWatchdog(server);
 
     const transport = new StdioServerTransport();

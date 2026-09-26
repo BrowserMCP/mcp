@@ -16,10 +16,17 @@ type Options = {
   version: string;
   tools: Tool[];
   resources: Resource[];
+  killExistingPortProcess?: boolean;
 };
 
 export async function createServerWithTools(options: Options): Promise<Server> {
-  const { name, version, tools, resources } = options;
+  const {
+    name,
+    version,
+    tools,
+    resources,
+    killExistingPortProcess = true,
+  } = options;
   const context = new Context();
   const server = new Server(
     { name, version },
@@ -31,7 +38,10 @@ export async function createServerWithTools(options: Options): Promise<Server> {
     },
   );
 
-  const wss = await createWebSocketServer();
+  const wss = await createWebSocketServer(
+    undefined,
+    killExistingPortProcess,
+  );
   wss.on("connection", (websocket) => {
     // Close any existing connections
     if (context.hasWs()) {
