@@ -9,7 +9,7 @@ import {
 import { Context } from "@/context";
 import type { Resource } from "@/resources/resource";
 import type { Tool } from "@/tools/tool";
-import { createWebSocketServer } from "@/ws";
+import { createBrowserTransport } from "@/ws";
 
 type Options = {
   name: string;
@@ -31,14 +31,7 @@ export async function createServerWithTools(options: Options): Promise<Server> {
     },
   );
 
-  const wss = await createWebSocketServer();
-  wss.on("connection", (websocket) => {
-    // Close any existing connections
-    if (context.hasWs()) {
-      context.ws.close();
-    }
-    context.ws = websocket;
-  });
+  const browserTransport = await createBrowserTransport(context);
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return { tools: tools.map((tool) => tool.schema) };
@@ -82,10 +75,11 @@ export async function createServerWithTools(options: Options): Promise<Server> {
     return { contents };
   });
 
+  const closeServer = server.close.bind(server);
   server.close = async () => {
-    await server.close();
-    await wss.close();
+    await closeServer();
     await context.close();
+    await browserTransport.close();
   };
 
   return server;

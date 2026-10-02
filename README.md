@@ -22,6 +22,13 @@ Browser MCP is an MCP server + Chrome extension that allows you to automate your
 - 🔒 Private: Since automation happens locally, your browser activity stays on your device and isn't sent to remote servers.
 - 👤 Logged In: Uses your existing browser profile, keeping you logged into all your services.
 - 🥷🏼 Stealth: Avoids basic bot detection and CAPTCHAs by using your real browser fingerprint.
+- 🔁 Multi-client: Additional MCP processes automatically relay browser commands through the first local Browser MCP process instead of replacing it.
+
+## Multiple MCP clients
+
+Browser MCP supports multiple AI applications and concurrent sessions without additional configuration. The first process binds the loopback WebSocket server on port 9009 and connects to the browser extension. Later processes keep their own MCP stdio connection and automatically relay browser commands through that primary process.
+
+If the primary exits, one connected relay is promoted automatically and the extension can reconnect to it. If port 9009 belongs to an unrelated service or an older Browser MCP version, startup fails without terminating or replacing that process.
 
 ## Contributing
 
