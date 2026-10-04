@@ -9,7 +9,7 @@ import {
 import { Context } from "@/context";
 import type { Resource } from "@/resources/resource";
 import type { Tool } from "@/tools/tool";
-import { createWebSocketServer } from "@/ws";
+import { BrowserBusyError, IDLE_HANDOFF_MS, PortOwner } from "@/ws";
 
 type Options = {
   name: string;
@@ -17,6 +17,34 @@ type Options = {
   tools: Tool[];
   resources: Resource[];
 };
+
+const WAIT_FOR_ACCESS_DEFAULT_SECONDS = 600;
+
+const waitForAccessSchema = {
+  name: "browser_wait_for_access",
+  description: `Block until this session gets control of the browser, then return. Use after another tool returned BROWSER_BUSY. The browser is handed over only after the other session has been idle for ${IDLE_HANDOFF_MS / 1000}s, so waiting never interrupts it. This call can block for minutes, so prefer running it in a background task or background subagent (which can then carry out the browser steps) instead of blocking the conversation.`,
+  inputSchema: {
+    type: "object" as const,
+    properties: {
+      timeoutSeconds: {
+        type: "number",
+        description: `Maximum seconds to wait (default ${WAIT_FOR_ACCESS_DEFAULT_SECONDS}).`,
+      },
+    },
+  },
+};
+
+function errorResult(error: unknown) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: error instanceof BrowserBusyError ? error.message : String(error),
+      },
+    ],
+    isError: true,
+  };
+}
 
 export async function createServerWithTools(options: Options): Promise<Server> {
   const { name, version, tools, resources } = options;
@@ -31,17 +59,15 @@ export async function createServerWithTools(options: Options): Promise<Server> {
     },
   );
 
-  const wss = await createWebSocketServer();
-  wss.on("connection", (websocket) => {
-    // Close any existing connections
-    if (context.hasWs()) {
-      context.ws.close();
-    }
-    context.ws = websocket;
-  });
+  // Take the port only if it is free; otherwise stand by until a tool is
+  // called (never kill another session's server).
+  const owner = new PortOwner(context);
+  await owner.tryListen();
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: tools.map((tool) => tool.schema) };
+    return {
+      tools: [...tools.map((tool) => tool.schema), waitForAccessSchema],
+    };
   });
 
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
@@ -49,6 +75,27 @@ export async function createServerWithTools(options: Options): Promise<Server> {
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    if (request.params.name === waitForAccessSchema.name) {
+      const timeoutSeconds =
+        Number(request.params.arguments?.timeoutSeconds) ||
+        WAIT_FOR_ACCESS_DEFAULT_SECONDS;
+      const started = Date.now();
+      try {
+        await owner.ensureOwner(timeoutSeconds * 1000);
+        owner.lastActivity = Date.now();
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Browser access granted after ${Math.round((Date.now() - started) / 1000)}s. You now control the browser; continue with your browser task (take a fresh browser_snapshot first).`,
+            },
+          ],
+        };
+      } catch (error) {
+        return errorResult(error);
+      }
+    }
+
     const tool = tools.find((tool) => tool.schema.name === request.params.name);
     if (!tool) {
       return {
@@ -59,14 +106,17 @@ export async function createServerWithTools(options: Options): Promise<Server> {
       };
     }
 
+    owner.busy++;
+    owner.lastActivity = Date.now();
     try {
+      await owner.ensureOwner();
       const result = await tool.handle(context, request.params.arguments);
       return result;
     } catch (error) {
-      return {
-        content: [{ type: "text", text: String(error) }],
-        isError: true,
-      };
+      return errorResult(error);
+    } finally {
+      owner.busy--;
+      owner.lastActivity = Date.now();
     }
   });
 
@@ -85,7 +135,7 @@ export async function createServerWithTools(options: Options): Promise<Server> {
   const originalClose = server.close.bind(server);
   server.close = async () => {
     await originalClose();
-    await wss.close();
+    await owner.release();
     await context.close();
   };
 

@@ -25,6 +25,13 @@ export class Context {
     return !!this._ws;
   }
 
+  /** Forget the socket (only if it is still the current one, when given). */
+  clearWs(ws?: WebSocket) {
+    if (!ws || this._ws === ws) {
+      this._ws = undefined;
+    }
+  }
+
   async sendSocketMessage<T extends MessageType<SocketMessageMap>>(
     type: T,
     payload: MessagePayload<SocketMessageMap, T>,
