@@ -82,8 +82,12 @@ export async function createServerWithTools(options: Options): Promise<Server> {
     return { contents };
   });
 
+  // Capture the original close before overriding; calling server.close()
+  // inside its own override recurses until the stack overflows (the
+  // exit watchdog in index.ts calls server.close() on stdin close).
+  const originalClose = server.close.bind(server);
   server.close = async () => {
-    await server.close();
+    await originalClose();
     await wss.close();
     await context.close();
   };
