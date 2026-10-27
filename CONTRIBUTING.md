@@ -46,6 +46,7 @@ It uses random ports and a temporary `BROWSER_MCP_HOME`, so it never touches you
 - Add or update tests next to the code (Vitest). Fix bugs with a test that fails without the fix.
 - Protocol changes go into both sides at once: the daemon (`packages/mcp/src/relay/`) and `packages/extension-core`. Nothing may send data anywhere on its own: analytics and the like belong in the closed store build, not here.
 - Don't import anything but `@browsermcp/*` packages and npm packages, and don't add dependencies without a reason.
+- A maintainer doesn't merge the pull request on GitHub. Browser MCP's other builds are made from the same source, so the change is copied there, reviewed and merged, and comes back to this repo as a commit that credits you as a co-author. Your pull request is then closed with a link to that commit.
 
 ## License
 
