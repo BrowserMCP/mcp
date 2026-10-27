@@ -74,7 +74,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report bugs and send changes, 
 ## License
 
 [Apache-2.0](LICENSE). "Browser MCP" and its logo are the project's trademarks: if you publish a modified extension or server, give it another name and icon ([TRADEMARKS.md](TRADEMARKS.md)).
-
-## Credits
-
-Browser MCP 0.1 was adapted from [Playwright MCP](https://github.com/microsoft/playwright-mcp) to automate the user's own browser rather than new browser instances. Browser MCP 2.0 drives tabs with [Playwright](https://playwright.dev) through the extension.
