@@ -30,6 +30,10 @@ jobs:
       - run: pnpm format
       - run: pnpm typecheck
 
+      # Ubuntu 24.04 runners block the unprivileged user namespaces Chromium's sandbox needs
+      - name: Allow Chromium's sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       # The server's tests run Playwright's Chromium
       - name: Install Chromium
         run: pnpm --filter @browsermcp/mcp exec playwright-core install --with-deps chromium
