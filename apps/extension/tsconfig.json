@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  // `.wxt/wxt.d.ts`: the types `wxt prepare` generates (auto-imports, `import.meta.env`, the extension's paths)
+  "include": [
+    ".wxt/wxt.d.ts",
+    "src",
+    "scripts",
+    "wxt.config.ts",
+    "extension-key.ts",
+    "extension-key.test.ts",
+    "vitest.config.ts"
+  ]
+}

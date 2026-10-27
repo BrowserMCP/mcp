@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 80,
+  "sortPackageJson": false,
+  "sortImports": {
+    "customGroups": [
+      { "groupName": "react", "elementNamePattern": ["react", "react-dom"] },
+      { "groupName": "browsermcp", "elementNamePattern": ["@browsermcp/**"] }
+    ],
+    "groups": [
+      "react",
+      ["builtin", "external"],
+      "browsermcp",
+      "internal",
+      ["parent", "sibling", "index"],
+      "unknown"
+    ]
+  },
+  "sortTailwindcss": {
+    "stylesheet": "./apps/extension/src/entrypoints/popup/style.css",
+    "functions": ["clsx", "cn", "cva", "tw"]
+  },
+  "ignorePatterns": ["pnpm-lock.yaml", "**/.output", "**/.wxt", "**/dist"]
+}

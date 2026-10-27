@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # Installs the pnpm version in `packageManager` and the Node version in `devEngines.runtime`, then runs `pnpm install --frozen-lockfile`
+      - name: Set up pnpm and Node
+        uses: pnpm/setup@v3
+        with:
+          cache: true
+          require-lockfile: true
+
+      - run: pnpm lint
+      - run: pnpm format
+      - run: pnpm typecheck
+
+      # The server's tests run Playwright's Chromium
+      - name: Install Chromium
+        run: pnpm --filter @browsermcp/mcp exec playwright-core install --with-deps chromium
+
+      - run: pnpm test
+      - run: pnpm build
+
+      # Drives the built extension through the server in headless Chromium
+      - name: Smoke test
+        run: pnpm smoke

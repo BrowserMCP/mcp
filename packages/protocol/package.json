@@ -1,0 +1,19 @@
+{
+  "name": "@browsermcp/protocol",
+  "version": "2.0.0",
+  "description": "The protocol between Browser MCP's extension and its daemon",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "devtools-protocol": "^0.0.1525085",
+    "typescript": "^7.0.2"
+  }
+}

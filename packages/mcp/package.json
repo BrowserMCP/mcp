@@ -1,0 +1,47 @@
+{
+  "name": "@browsermcp/mcp",
+  "version": "2.1.0",
+  "description": "MCP server for browser automation using Browser MCP",
+  "author": "Browser MCP",
+  "license": "Apache-2.0",
+  "homepage": "https://browsermcp.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BrowserMCP/mcp.git",
+    "directory": "packages/mcp"
+  },
+  "bugs": "https://github.com/browsermcp/mcp/issues",
+  "type": "module",
+  "bin": {
+    "mcp-server-browsermcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsup && shx chmod +x dist/index.js",
+    "prepare": "npm run build",
+    "watch": "tsup --watch",
+    "test": "vitest run",
+    "eval": "vitest run --config eval/vitest.config.ts",
+    "inspector": "CLIENT_PORT=9001 SERVER_PORT=9002 pnpx @modelcontextprotocol/inspector node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "commander": "^14.0.1",
+    "playwright-core": "1.64.1",
+    "ws": "^8.18.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "@browsermcp/protocol": "workspace:*",
+    "@types/node": "^24.19.1",
+    "@types/ws": "^8.18.1",
+    "shx": "^0.4.0",
+    "tsup": "^8.5.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}

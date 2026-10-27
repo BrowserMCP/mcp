@@ -1,0 +1,40 @@
+{
+  "name": "@browsermcp/extension",
+  "version": "2.1.0",
+  "description": "Browser MCP's extension for Chrome and other Chromium browsers, built from source",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "wxt build",
+    "build:dev": "wxt build --mode development",
+    "zip": "wxt zip",
+    "typecheck": "wxt prepare && tsc --noEmit",
+    "test": "vitest run",
+    "smoke": "wxt build --mode development && pnpm --filter @browsermcp/mcp build && node scripts/smoke-browser-control.ts",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "@browsermcp/extension-core": "workspace:*",
+    "@browsermcp/protocol": "workspace:*",
+    "lucide-react": "^1.52.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@playwright/test": "^1.63.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.19.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.18.1",
+    "@wxt-dev/auto-icons": "^1.1.2",
+    "@wxt-dev/module-react": "^1.2.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3",
+    "ws": "^8.18.3",
+    "wxt": "^0.21.4"
+  }
+}

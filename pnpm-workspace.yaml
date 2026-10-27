@@ -1,0 +1,10 @@
+packages:
+  - packages/*
+  - apps/*
+
+allowBuilds:
+  esbuild: true
+  # The extension's icons (`@wxt-dev/auto-icons`)
+  sharp: true
+
+minimumReleaseAge: 1440 # 1 day (minutes)
