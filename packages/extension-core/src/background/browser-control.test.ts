@@ -286,6 +286,36 @@ describe("the tabs the extension reports", () => {
       expect.objectContaining({ tabId: 6, pinned: true, active: true }),
     ]);
   });
+
+  it("reports incognito tabs once the user allows the extension in incognito", async () => {
+    chrome.addTab({ id: 1, url: "https://example.com/" });
+    chrome.addTab({ id: 2, url: "https://example.com/", incognito: true });
+    chrome.setIncognitoAccess(true);
+    const { ws } = await startPaired(await createDaemonKey());
+
+    const state = await latestState(ws);
+    expect(state.tabs.map((tab) => tab.tabId)).toEqual([1, 2]);
+
+    await request(ws, { method: "attach", params: { tabId: 2 } });
+    expect(chrome.attached.has(2)).toBe(true);
+  });
+});
+
+describe("where agents' new tabs open", () => {
+  it("skips an app's group in an incognito window", async () => {
+    chrome.setIncognitoAccess(true);
+    const { ws } = await startPaired(await createDaemonKey());
+    const app = { id: "claude-code", name: "Claude Code" };
+    await request(ws, { method: "createTab", params: { app } });
+    // The user dragged an incognito tab into the app's group
+    const [groupId] = chrome.groups.keys();
+    chrome.groups.get(groupId)!.windowId = chrome.addIncognitoWindow();
+
+    const { tabId } = (
+      await request(ws, { method: "createTab", params: { app } })
+    ).result as { tabId: number };
+    expect(chrome.tabs.get(tabId)!.windowId).toBe(1);
+  });
 });
 
 describe("attaching", () => {

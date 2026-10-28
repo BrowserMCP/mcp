@@ -8,7 +8,7 @@ Browser MCP lets AI apps (Claude Code, Cursor, VS Code, Codex, Claude Desktop…
 
 ## How it works
 
-Each AI app runs the MCP server (`npx @browsermcp/mcp@latest`), a small process that starts one daemon per user and forwards the app's `browser` tool calls to it. The daemon drives the browser's tabs with Playwright, through the extension: a thin `chrome.debugger` relay that only talks to the daemon on `127.0.0.1`, and only after you click **Allow** in its popup once per computer, having checked that its six-digit code matches the one your AI app shows. The extension enforces its own rules whatever the daemon asks: no incognito, browser or extension pages, and nothing while you've pressed **Stop**.
+Each AI app runs the MCP server (`npx @browsermcp/mcp@latest`), a small process that starts one daemon per user and forwards the app's `browser` tool calls to it. The daemon drives the browser's tabs with Playwright, through the extension: a thin `chrome.debugger` relay that only talks to the daemon on `127.0.0.1`, and only after you click **Allow** in its popup once per computer, having checked that its six-digit code matches the one your AI app shows. The extension enforces its own rules whatever the daemon asks: no incognito tabs unless you turned on **Allow in Incognito** for the extension in Chrome, no browser or extension pages, and nothing while you've pressed **Stop**.
 
 | Folder                    | Package                      |                                                                                                                           |
 | ------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------- |

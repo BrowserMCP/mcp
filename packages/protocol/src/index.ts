@@ -3,7 +3,7 @@
  *
  * The extension probes `GET http://127.0.0.1:<port>/browsermcp/status` on each of `RELAY_PORTS` in turn, then opens `ws://127.0.0.1:<port>/extension` and sends `hello` with a random challenge. The daemon answers `welcome` with its public key and its signature of the challenge (`pairingPayload()`), or closes with `RelayCloseCode.unsupportedProtocol` and a reason naming the side to update. Every frame is one JSON object (`ExtensionMessage` or `DaemonMessage`).
  *
- * Pairing: a daemon key the extension hasn't paired with gets no tabs (`state.pairing: "pending"`) and every request fails with `pairingRequiredMessage()` until the user clicks **Allow** in the popup, which shows the same six-digit `pairingCode()`. The extension enforces every rule about tabs (pairing, incognito and browser pages, Stop), so a program that takes over the port gets nothing.
+ * Pairing: a daemon key the extension hasn't paired with gets no tabs (`state.pairing: "pending"`) and every request fails with `pairingRequiredMessage()` until the user clicks **Allow** in the popup, which shows the same six-digit `pairingCode()`. The extension enforces every rule about tabs (pairing, incognito tabs unless the user allowed the extension in incognito, browser pages, Stop), so a program that takes over the port gets nothing.
  *
  * The code is a short authentication string built with a commitment, like Bluetooth's numeric comparison or ZRTP:
  * 1. `hello` (extension → daemon) carries a random `challenge`.
@@ -184,7 +184,7 @@ export type RelayCapability =
 // --- State the extension reports ---
 
 /**
- * A tab agents may use: every tab except incognito, discarded, `chrome://` and other browser pages, extension pages, and the Web Store. The list stays on the user's machine; the model only sees titles and URLs when it runs `tab list`
+ * A tab agents may use: every tab except incognito ones (unless the user allowed the extension in incognito), discarded, `chrome://` and other browser pages, extension pages, and the Web Store. The list stays on the user's machine; the model only sees titles and URLs when it runs `tab list`
  */
 export type ExposedTab = {
   tabId: number;

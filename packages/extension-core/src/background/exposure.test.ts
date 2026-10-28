@@ -3,7 +3,7 @@ import type { Browser } from "wxt/browser";
 
 import { isExposedTab, isExposedUrl } from "./exposure";
 
-const rules = { fileAccess: false };
+const rules = { fileAccess: false, incognitoAccess: false };
 
 function tab(overrides: Partial<Browser.tabs.Tab> = {}): Browser.tabs.Tab {
   return {
@@ -52,12 +52,25 @@ describe("which tabs agents may use", () => {
     expect(isExposedUrl("file:///tmp/a.html", true)).toBe(true);
   });
 
-  it("leaves out incognito and discarded tabs, and tabs without an ID", () => {
+  it("leaves out discarded tabs, and tabs without an ID", () => {
     expect(isExposedTab(tab(), rules)).toBe(true);
-    expect(isExposedTab(tab({ incognito: true }), rules)).toBe(false);
     expect(isExposedTab(tab({ discarded: true }), rules)).toBe(false);
     expect(isExposedTab(tab({ id: -1 }), rules)).toBe(false);
     expect(isExposedTab(tab({ id: undefined }), rules)).toBe(false);
+  });
+
+  it("lets agents use incognito tabs only when the extension is allowed in incognito", () => {
+    const incognito = tab({ incognito: true });
+    expect(isExposedTab(incognito, rules)).toBe(false);
+    expect(isExposedTab(incognito, { ...rules, incognitoAccess: true })).toBe(
+      true,
+    );
+    expect(
+      isExposedTab(tab({ incognito: true, discarded: true }), {
+        ...rules,
+        incognitoAccess: true,
+      }),
+    ).toBe(false);
   });
 
   it("uses the URL a tab is loading when it has none yet", () => {

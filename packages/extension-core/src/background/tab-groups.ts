@@ -211,7 +211,7 @@ export function reconcileAppGroups(): Promise<void> {
 }
 
 /**
- * Opens an agent's new tab, decided only here. As the hidden-tab spike found (`@browsermcp/mcp`'s `spikes/hidden-tabs/RESULTS.md`), it's a background tab (never active, and no window is focused) in the window that has the app's group, else the user's last focused normal window; the daemon's focus emulation makes it render. Only when there's no normal window does it open one, minimized and unfocused, so nothing comes up over the user's windows
+ * Opens an agent's new tab, decided only here. As the hidden-tab spike found (`@browsermcp/mcp`'s `spikes/hidden-tabs/RESULTS.md`), it's a background tab (never active, and no window is focused) in the window that has the app's group (never an incognito one), else the user's last focused normal window; the daemon's focus emulation makes it render. Only when there's no normal window does it open one, minimized and unfocused, so nothing comes up over the user's windows
  */
 export async function openAgentTab(
   url: string,
@@ -221,7 +221,12 @@ export async function openAgentTab(
   let windowId: number | undefined;
   for (const groupId of groups.apps[appId]?.groupIds ?? []) {
     const group = await browser.tabGroups.get(groupId).catch(() => null);
-    if (group) {
+    if (!group) {
+      continue;
+    }
+    // A group in an incognito window (the user dragged one of its tabs in) isn't where new tabs go: they'd open logged out
+    const window = await browser.windows.get(group.windowId).catch(() => null);
+    if (window && !window.incognito) {
       windowId = group.windowId;
       break;
     }

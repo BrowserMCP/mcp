@@ -127,8 +127,10 @@ export function installFakeChrome() {
   Object.assign(fakeBrowser.runtime, {
     getManifest: () => ({ version: "2.0.0", manifest_version: 3 }),
   });
+  let incognitoAccess = false;
   Object.assign(fakeBrowser.extension, {
     isAllowedFileSchemeAccess: async () => false,
+    isAllowedIncognitoAccess: async () => incognitoAccess,
   });
   Object.assign(fakeBrowser.debugger, {
     attach,
@@ -283,6 +285,19 @@ export function installFakeChrome() {
     attached,
     debugger: { attach, detach, sendCommand, ...debuggerEvents },
     addTab,
+    /** The user turns "Allow in Incognito" on or off for the extension */
+    setIncognitoAccess(allowed: boolean) {
+      incognitoAccess = allowed;
+    },
+    addIncognitoWindow() {
+      const window = {
+        id: nextWindowId++,
+        type: "normal" as const,
+        incognito: true,
+      };
+      windows.set(window.id, window);
+      return window.id;
+    },
     addPopupWindow() {
       const window = {
         id: nextWindowId++,

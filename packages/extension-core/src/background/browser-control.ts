@@ -361,7 +361,11 @@ export class BrowserControl {
       return tab;
     }
     throw new Error(
-      `Agents can't use tab ${tabId}: it's incognito, discarded or a browser page`,
+      `Agents can't use tab ${tabId}: ${
+        tab.incognito && !rules.incognitoAccess
+          ? "it's incognito, and the extension isn't allowed in incognito"
+          : "it's discarded or a browser page"
+      }`,
     );
   }
 
@@ -707,7 +711,11 @@ async function getExposureRules(): Promise<ExposureRules> {
     .isAllowedFileSchemeAccess()
     .then(Boolean)
     .catch(() => false);
-  return { fileAccess };
+  const incognitoAccess = await browser.extension
+    .isAllowedIncognitoAccess()
+    .then(Boolean)
+    .catch(() => false);
+  return { fileAccess, incognitoAccess };
 }
 
 /**
