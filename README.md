@@ -73,4 +73,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report bugs and send changes, 
 
 ## License
 
-[Apache-2.0](LICENSE). "Browser MCP" and its logo are the project's trademarks: if you publish a modified extension or server, give it another name and icon ([TRADEMARKS.md](TRADEMARKS.md)).
+[Apache-2.0](LICENSE). Building it for yourself or your team is fine, and so is saying that your tool is compatible with Browser MCP or built on its code. If you publish a modified extension or server (to a browser extension store, npm or anywhere else others install it from), please give it another name and icon, and don't present it as the official Browser MCP or as endorsed by it, so people can tell the two apart. Keep the LICENSE and say what you changed.
