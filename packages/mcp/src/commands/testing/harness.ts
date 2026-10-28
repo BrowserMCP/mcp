@@ -11,15 +11,9 @@ import {
 } from "@/commands/testing/launched-backend";
 import type { Capability, CommandEngine, SessionIO } from "@/contracts";
 
-/** File access like the thin process's, limited to one root directory */
+/** File access like the thin process's, with relative paths resolved against one root directory */
 export function rootedIO(root: string): SessionIO {
-  const resolve = (file: string) => {
-    const full = path.resolve(root, file);
-    if (!full.startsWith(root + path.sep)) {
-      throw new Error(`${file} is outside your MCP roots (${root})`);
-    }
-    return full;
-  };
+  const resolve = (file: string) => path.resolve(root, file);
   return {
     async readFile(file) {
       const full = resolve(file);

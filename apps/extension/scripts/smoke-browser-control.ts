@@ -444,23 +444,32 @@ get text #out`,
   );
 
   await section(
-    "uploads and screenshot paths only within the MCP roots",
+    "uploads and screenshot paths, relative to the MCP root or absolute",
     async () => {
-      const outside = await call(
+      const inside = await call(
         alpha,
-        `goto ${fixtures.url("/upload")}\nupload #file /etc/hosts`,
+        `goto ${fixtures.url("/upload")}\nupload #file notes.txt\nget text #out`,
       );
-      expect(outside.isError && outside.text.includes(rootsDir), outside.text);
-      const inside = await call(alpha, `upload #file notes.txt\nget text #out`);
       expect(
         !inside.isError && inside.text.includes("notes.txt 26"),
         inside.text,
       );
-      const shotOutside = await call(
+      const absolute = await call(
+        alpha,
+        `upload #file ${path.join(rootsDir, "notes.txt")}\nget text #out`,
+      );
+      expect(
+        !absolute.isError && absolute.text.includes("notes.txt 26"),
+        absolute.text,
+      );
+      const shotElsewhere = await call(
         alpha,
         `screenshot --path ${path.join(tempRoot, "x.jpg")}`,
       );
-      expect(shotOutside.isError, shotOutside.text);
+      expect(
+        !shotElsewhere.isError && existsSync(path.join(tempRoot, "x.jpg")),
+        shotElsewhere.text,
+      );
       const shotInside = await call(alpha, "screenshot --path shot.jpg");
       expect(
         !shotInside.isError && existsSync(path.join(rootsDir, "shot.jpg")),

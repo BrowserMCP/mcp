@@ -113,8 +113,9 @@ describe("the thin process's MCP server", () => {
     });
   });
 
-  it("reads and writes files only under the client's MCP roots", async () => {
+  it("resolves relative file paths against the client's first MCP root, and reads and writes absolute ones elsewhere", async () => {
     writeFileSync(path.join(root, "upload.txt"), "data");
+    writeFileSync(path.join(home, "elsewhere.txt"), "away");
     const { run } = await connect({ roots: [root] });
     expect(await run("read upload.txt")).toEqual({
       text: "upload.txt text/plain data",
@@ -124,78 +125,68 @@ describe("the thin process's MCP server", () => {
       text: path.join(root, "shots/page.jpg"),
       isError: false,
     });
-    const outside = await run(
-      `read ${path.join(home, "daemon-" + port + ".json")}`,
-    );
-    expect(outside.isError).toBe(true);
-    expect(outside.text).toContain(`outside the AI app's MCP roots (${root})`);
+    expect(await run(`read ${path.join(home, "elsewhere.txt")}`)).toEqual({
+      text: "elsewhere.txt text/plain away",
+      isError: false,
+    });
+    expect(await run(`write ${path.join(home, "out/page.jpg")} x`)).toEqual({
+      text: path.join(home, "out/page.jpg"),
+      isError: false,
+    });
   });
 
-  it("refuses file access when the only root is /", async () => {
+  it("resolves relative file paths against a root of / too", async () => {
     const { run } = await connect({ roots: ["/"] });
-    const result = await run("read etc/hosts");
-    expect(result.isError).toBe(true);
-    expect(result.text).toContain("Run the AI app in a project directory");
+    expect((await run("read etc/hosts")).text).toContain("hosts ");
   });
 });
 
 describe("createFileAccess", () => {
-  it("refuses paths that escape the roots, including through symlinks", async () => {
+  it("reads and writes absolute paths outside the roots, and through symlinks", async () => {
     const outside = mkdtempSync(path.join(tmpdir(), "browsermcp-outside-"));
     writeFileSync(path.join(outside, "secret"), "s");
     symlinkSync(outside, path.join(root, "link"));
-    mkdirSync(path.join(root, "sub"));
     const files = createFileAccess(async () => [root]);
-    await expect(files.readFile({ path: "../secret" })).rejects.toThrow(
-      /outside/,
-    );
-    await expect(files.readFile({ path: "link/secret" })).rejects.toThrow(
-      /outside/,
-    );
+    await expect(
+      files.readFile({ path: path.join(outside, "secret") }),
+    ).resolves.toMatchObject({
+      name: "secret",
+      base64: Buffer.from("s").toString("base64"),
+    });
+    await expect(
+      files.readFile({ path: "link/secret" }),
+    ).resolves.toMatchObject({ name: "secret" });
     await expect(
       files.writeFile({ path: "link/new.txt", base64: "eA==" }),
-    ).rejects.toThrow(/outside/);
-    await expect(
-      files.writeFile({ path: "sub/new.txt", base64: "eA==" }),
-    ).resolves.toEqual({ path: path.join(root, "sub/new.txt") });
+    ).resolves.toEqual({ path: path.join(root, "link/new.txt") });
+    expect(existsSync(path.join(outside, "new.txt"))).toBe(true);
     rmSync(outside, { recursive: true, force: true });
   });
 
-  it("refuses dangling symlinks, which a write would follow out of the roots", async () => {
-    const outside = mkdtempSync(path.join(tmpdir(), "browsermcp-outside-"));
-    symlinkSync(path.join(outside, "planted"), path.join(root, "dangling"));
-    writeFileSync(path.join(root, "real.txt"), "inside");
-    symlinkSync(path.join(root, "real.txt"), path.join(root, "alias.txt"));
-    const files = createFileAccess(async () => [root], outside);
+  it("doesn't ask for the roots for absolute paths and ~", async () => {
+    writeFileSync(path.join(root, "abs.txt"), "x");
+    const files = createFileAccess(async () => {
+      throw new Error("asked for the roots");
+    }, home);
     await expect(
-      files.writeFile({ path: "dangling", base64: "eA==" }),
-    ).rejects.toThrow(/symbolic link/);
-    expect(existsSync(path.join(outside, "planted"))).toBe(false);
-    // A symlink to a file under the roots is read from where it leads
-    await expect(files.readFile({ path: "alias.txt" })).resolves.toMatchObject({
-      name: "alias.txt",
-      base64: Buffer.from("inside").toString("base64"),
-    });
-    rmSync(outside, { recursive: true, force: true });
+      files.readFile({ path: path.join(root, "abs.txt") }),
+    ).resolves.toMatchObject({ name: "abs.txt" });
+    await expect(
+      files.writeFile({ path: "~/abs.txt", base64: "eA==" }),
+    ).resolves.toEqual({ path: path.join(home, "abs.txt") });
   });
 
-  it("ignores roots that allow everything: /, the home directory and its parents", async () => {
-    writeFileSync(path.join(root, "file.txt"), "x");
-    const home = path.join(root, "home");
-    mkdirSync(home);
-    for (const roots of [["/"], [home], [root]]) {
-      const files = createFileAccess(async () => roots, home);
-      await expect(files.readFile({ path: "file.txt" })).rejects.toThrow(
-        "Run the AI app in a project directory, or use an AI app that supports MCP roots",
-      );
-    }
-    // A project root next to them still works, and relative paths resolve against it
-    const files = createFileAccess(
-      async () => ["/", root],
-      path.join(tmpdir(), "elsewhere"),
-    );
-    await expect(files.readFile({ path: "file.txt" })).resolves.toMatchObject({
-      name: "file.txt",
+  it("expands ~ to the home directory", async () => {
+    const files = createFileAccess(async () => [root], home);
+    mkdirSync(path.join(home, "Downloads"));
+    await expect(
+      files.writeFile({ path: "~/Downloads/file.pdf", base64: "eA==" }),
+    ).resolves.toEqual({ path: path.join(home, "Downloads/file.pdf") });
+    await expect(
+      files.readFile({ path: "~/Downloads/file.pdf" }),
+    ).resolves.toMatchObject({
+      name: "file.pdf",
+      mimeType: "application/pdf",
     });
   });
 

@@ -472,7 +472,7 @@ get text getByRole('listitem').first()`,
     );
   });
 
-  it("uploads files read through the session, within its roots", async () => {
+  it("uploads files read through the session", async () => {
     const s = session();
     writeFileSync(path.join(h.root, "a.txt"), "hello");
     writeFileSync(path.join(h.root, "b.txt"), "hi");
@@ -486,9 +486,7 @@ get text getByRole('listitem').first()`,
         "upload getByRole('button', { name: 'Choose' }) b.txt\nget text #out",
       ),
     ).toContain("b.txt:2");
-    expect(await h.run(s, "upload #file ../../etc/passwd")).toContain(
-      "is outside your MCP roots",
-    );
+    expect(await h.run(s, "upload #file ../missing.txt")).toContain("ENOENT");
   });
 
   it("evaluates functions and expressions in the page", async () => {
@@ -529,7 +527,7 @@ get text getByRole('listitem').first()`,
     expect(await h.run(s, 'requests --filter "api"')).not.toContain("/misc");
   });
 
-  it("takes JPEG screenshots that fit, and saves them under the roots", async () => {
+  it("takes JPEG screenshots that fit, and saves them", async () => {
     const s = session();
     await h.run(s, `goto ${u("/big")}`);
     const { result, text } = await h.call(
@@ -544,11 +542,6 @@ get text getByRole('listitem').first()`,
     const [, width, height] = /(\d+)×(\d+) JPEG/.exec(text) ?? [];
     expect(Math.max(Number(width), Number(height))).toBeLessThanOrEqual(1568);
     expect(text).toContain(`saved to ${path.join(h.root, "shot.jpg")}`);
-    const element = await h.run(
-      s,
-      "screenshot getByRole('link', { name: 'Link number 1', exact: true }) --path ../x.jpg",
-    );
-    expect(element).toContain("is outside your MCP roots");
   });
 });
 

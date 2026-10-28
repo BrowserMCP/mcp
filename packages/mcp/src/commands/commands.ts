@@ -720,8 +720,8 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: "upload",
-    usage: "upload <target> <path>...   # local files, under your MCP roots",
-    help: "Sets files on a file input, or on the file chooser that clicking the target opens. Paths are on your machine, under your MCP roots (or working directory).",
+    usage: "upload <target> <path>...   # local files",
+    help: "Sets files on a file input, or on the file chooser that clicking the target opens. Paths are on your machine: absolute, under ~, or relative to your MCP root (or working directory).",
     maxArgs: Infinity,
     echo: (args) =>
       `upload ${args.positional.map((token) => token.text).join(" ")}`,
@@ -984,7 +984,7 @@ export const COMMANDS: CommandDef[] = [
     name: "screenshot",
     usage:
       "screenshot [<target>] [--full] [--path <file>]   # JPEG, longest side ≤ 1568 px",
-    help: "Adds a JPEG of the viewport (or the element, or the full page) to the result, longest side ≤ 1568 px. --path also saves it, under your MCP roots.",
+    help: "Adds a JPEG of the viewport (or the element, or the full page) to the result, longest side ≤ 1568 px. --path also saves it, overwriting an existing file (paths: absolute, under ~, or relative to your MCP root or working directory).",
     flags: { full: false, path: true },
     maxArgs: 1,
     run: screenshot,

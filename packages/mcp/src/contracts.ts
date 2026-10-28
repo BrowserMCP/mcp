@@ -78,12 +78,12 @@ export type ClientToDaemonMethods = {
 
 /** The daemon asks the thin process to touch files, since the thin process runs where the AI app does (and its paths are the AI app's) */
 export type DaemonToClientMethods = {
-  /** For `upload`: reads a file. Only files under the AI app's MCP roots (`roots/list`, or the working directory when the client has none) are read, so a page can't talk the agent into uploading `~/.ssh/id_rsa`; other paths fail with a message naming the roots. Relative paths resolve against the first root */
+  /** For `upload`: reads a file anywhere on the machine. `~` is the home directory, and relative paths resolve against the first of the AI app's MCP roots (`roots/list`, or the working directory when the client has none) */
   readFile: {
     params: { path: string };
     result: { name: string; mimeType: string; base64: string };
   };
-  /** For `screenshot --path`: writes a file under the MCP roots (as `readFile`) and returns its absolute path */
+  /** For `screenshot --path`: writes a file (paths as for `readFile`) and returns its absolute path */
   writeFile: {
     params: { path: string; base64: string };
     result: { path: string };

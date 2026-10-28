@@ -251,14 +251,14 @@ describe("DaemonClient", () => {
     }
   });
 
-  it("asks the thin process for files, within the MCP roots", async () => {
+  it("asks the thin process for files, relative to its MCP root", async () => {
     const thin = client();
     expect(await run(thin, "write shot.txt hello")).toBe(
       path.join(home, "shot.txt"),
     );
     expect(await run(thin, "read shot.txt")).toBe("shot.txt text/plain hello");
-    await expect(run(thin, "read /etc/hosts")).rejects.toThrow(
-      /outside the AI app's MCP roots/,
+    expect(await run(thin, `read ${path.join(home, "shot.txt")}`)).toBe(
+      "shot.txt text/plain hello",
     );
   });
 });

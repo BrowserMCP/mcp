@@ -27,7 +27,7 @@ export type ThinOptions = {
 };
 
 /**
- * Creates the thin process's MCP server: one per AI app, over stdio. It forwards `tools/list` and `tools/call` to the daemon (started on demand) and answers the daemon's file requests within the AI app's MCP roots
+ * Creates the thin process's MCP server: one per AI app, over stdio. It forwards `tools/list` and `tools/call` to the daemon (started on demand) and answers the daemon's file requests
  */
 export function createThinServer(options: ThinOptions) {
   const log = options.log ?? debugLog;
@@ -36,7 +36,7 @@ export function createThinServer(options: ThinOptions) {
     { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
   );
 
-  /** The AI app's MCP roots, or the working directory when it has none */
+  /** The AI app's MCP roots, or the working directory when it has none, which relative file paths resolve against */
   const roots = async (): Promise<string[]> => {
     if (server.getClientCapabilities()?.roots) {
       try {

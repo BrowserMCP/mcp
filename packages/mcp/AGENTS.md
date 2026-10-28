@@ -4,7 +4,7 @@
 
 ## Layers
 
-- `src/thin/`: the thin process (`dist/index.js`), one per AI app: an MCP stdio server that forwards `tools/list` and `tools/call` to the daemon, starting or replacing it as needed, and answers the daemon's file requests within the MCP roots. Keep it light: it must not import the relay, Playwright or the engine (only `src/commands/instructions.ts`).
+- `src/thin/`: the thin process (`dist/index.js`), one per AI app: an MCP stdio server that forwards `tools/list` and `tools/call` to the daemon, starting or replacing it as needed, and answers the daemon's file requests (any path; relative ones resolve against the first MCP root). Keep it light: it must not import the relay, Playwright or the engine (only `src/commands/instructions.ts`).
 - `src/daemon/`: the daemon process (`dist/daemon.js`): ports, `daemon.json`, `identity.json`, sessions over `/client`, idle exit, `/shutdown`, the log. `src/daemon/main.ts` is the only importer of the command engine, so everything else is tested with `src/testing/stub-engine.ts`.
 - `src/relay/`: the HTTP/WS server, the extension connection, the CDP bridge and `RelayBackend` (the `BrowserBackend` the engine uses). User-facing messages live in `src/relay/messages.ts` and `@browsermcp/protocol`.
 - `src/commands/`, `src/tools/`: the command engine and the `browser` tool.
