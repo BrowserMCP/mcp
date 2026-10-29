@@ -193,6 +193,10 @@ export class LaunchedBackend implements BrowserBackend {
     return this.unavailable;
   }
 
+  async findTab(tabId: number): Promise<ExposedTab | undefined> {
+    return this.tabs().find((tab) => tab.tabId === tabId);
+  }
+
   tabs(): ExposedTab[] {
     return [...this.tabsById].map(([tabId, tab]) => ({
       tabId,

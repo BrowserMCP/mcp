@@ -51,7 +51,7 @@ export type RelayBackendOptions = Omit<
   /** How long after the daemon starts, or the extension disconnects, `whenReady()` waits for the extension to (re)connect. The extension retries every 1–5 s */
   reconnectGraceMs?: number;
   reattachDelayMs?: number;
-  /** How long `page()` waits for the extension to report a tab it doesn't list yet (1 s) */
+  /** How long `findTab()` and `page()` wait for the extension to report a tab it doesn't list yet (1 s) */
   unknownTabWaitMs?: number;
 };
 
@@ -376,6 +376,15 @@ export class RelayBackend implements BrowserBackend {
   /** The connected browser's tabs: their IDs mean nothing in another browser */
   tabs(): ExposedTab[] {
     return this.extension?.state.tabs ?? [];
+  }
+
+  /** The connected browser's tab with this ID, waiting (briefly) for the extension to report one it doesn't list yet: it reports a new tab a moment after it appears */
+  async findTab(tabId: number): Promise<ExposedTab | undefined> {
+    const find = () => this.tabs().find((tab) => tab.tabId === tabId);
+    if (!find()) {
+      await this.waitForTab(tabId, this.options.unknownTabWaitMs ?? 1000);
+    }
+    return find();
   }
 
   async createTab(options: { url?: string; app: AppInfo }): Promise<number> {

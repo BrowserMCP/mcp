@@ -462,6 +462,8 @@ get text #out`,
         !absolute.isError && absolute.text.includes("notes.txt 26"),
         absolute.text,
       );
+      // Headless Chromium on Linux draws no frames for a background tab, so its screenshots stall even with focus emulation
+      await activateTab(alphaTab);
       const shotElsewhere = await call(
         alpha,
         `screenshot --path ${path.join(tempRoot, "x.jpg")}`,
@@ -880,6 +882,13 @@ async function tabIdOf(url: string) {
   }, url);
 }
 
+async function activateTab(tabId: number) {
+  await inWorker(async (tabId) => {
+    const { chrome } = globalThis as unknown as { chrome: Chrome };
+    await chrome.tabs.update(tabId, { active: true });
+  }, tabId);
+}
+
 /** Opens the popup's page in a tab of its own. With `besideTab`, in a window of its own, then makes that tab's window the focused one, so the popup acts on it */
 async function openPopup(options: { besideTab?: number } = {}): Promise<Page> {
   const url = `chrome-extension://${extensionId}/popup.html`;
@@ -1094,7 +1103,8 @@ if (location.pathname === "/ext-frame") {
   host.attachShadow({ mode: "closed" }).appendChild(frame);
   document.body.appendChild(host);
 } else if (location.pathname === "/ext-frame-sticky") {
-  // Like a password manager that puts its frame back as soon as the page loses it
+  // Like a password manager that puts its frame back once the page loses it. Chrome detaches the debugger when another extension's frame appears in an attached tab (the server re-attaches, removing the frame again), so a frame that came back every time would leave no time to run a command
+  let comebacks = 1;
   const add = () => {
     const sticky = document.createElement("iframe");
     sticky.src = chrome.runtime.getURL("frame.html");
@@ -1102,7 +1112,10 @@ if (location.pathname === "/ext-frame") {
   };
   add();
   new MutationObserver(() => {
-    if (!document.querySelector("iframe")) setTimeout(add, 50);
+    if (comebacks > 0 && !document.querySelector("iframe")) {
+      comebacks--;
+      setTimeout(add, 50);
+    }
   }).observe(document.body, { childList: true });
 }`,
   );

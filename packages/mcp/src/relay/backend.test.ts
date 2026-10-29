@@ -324,6 +324,24 @@ describe("RelayBackend", () => {
     );
   });
 
+  it("finds a tab the extension reports a moment after it appears", async () => {
+    // The real extension sends `state` 100 ms after a change
+    const extension = await connect({ stateDelayMs: 150 });
+    const tabId = await extension.openTab("about:blank");
+    expect(relay.backend.tabs().map((tab) => tab.tabId)).not.toContain(tabId);
+    expect((await relay.backend.findTab(tabId))?.tabId).toBe(tabId);
+  });
+
+  it("doesn't find a tab the extension never reports", async () => {
+    await relay.close();
+    relay = await startTestBackend({
+      replacePingTimeoutMs: 500,
+      unknownTabWaitMs: 100,
+    });
+    await connect();
+    await expect(relay.backend.findTab(987_654)).resolves.toBeUndefined();
+  });
+
   it("doesn't adopt a contender that left while the current browser was pinged", async () => {
     const first = await connect();
     const tabId = [...first.tabs.keys()][0]!;

@@ -109,6 +109,8 @@ export interface BrowserBackend {
   readonly paused: boolean;
   /** The tabs the extension reports */
   tabs(): ExposedTab[];
+  /** The tab the extension reports with this ID, waiting briefly for one it doesn't list yet: it reports a new tab a moment after it appears */
+  findTab(tabId: number): Promise<ExposedTab | undefined>;
 
   /** Opens a background tab in the app's group. Doesn't attach the debugger */
   createTab(options: { url?: string; app: AppInfo }): Promise<number>;

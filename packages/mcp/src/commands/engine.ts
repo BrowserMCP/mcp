@@ -513,7 +513,7 @@ class Engine implements CommandEngine {
           return tabId;
         },
         select: async (tabId) => {
-          const tab = this.backend.tabs().find((t) => t.tabId === tabId);
+          const tab = await this.backend.findTab(tabId);
           if (!tab) {
             throw new StepError(`There's no tab ${tabId}. Run \`tab list\``);
           }
