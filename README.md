@@ -21,6 +21,8 @@ Each AI app runs the MCP server (`npx @browsermcp/mcp@latest`), a small process 
 
 You need Node.js 24 or later, pnpm (`corepack enable`) and Chrome or another Chromium browser (Edge, Brave, Arc…). Firefox has no `debugger` API, so Browser MCP doesn't work there.
 
+The Chrome Web Store version updates itself. A build you load yourself doesn't: you update it by hand (see [Updating](#updating)).
+
 1. Build the extension and the server:
 
    ```sh
@@ -51,6 +53,8 @@ You need Node.js 24 or later, pnpm (`corepack enable`) and Chrome or another Chr
 Every build of this extension has the same ID (`imlplcjlhgpajopdbpbngiadkcmdbgob`, from the `key` in `apps/extension/extension-key.ts`), which the server accepts besides the Chrome Web Store's. A build with another key needs its ID in `BROWSER_MCP_EXTENSION_IDS` (comma-separated) in the server's environment, or on a line of `~/.browsermcp/dev-extension-ids`.
 
 ## Updating
+
+Only for a self-built extension: the Chrome Web Store version updates itself.
 
 ```sh
 git pull
