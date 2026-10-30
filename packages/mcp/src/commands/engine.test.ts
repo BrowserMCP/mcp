@@ -96,15 +96,18 @@ Page: ${u("/dialogs")} — "Dialogs"`);
     );
   });
 
-  it("caps reads and says how to narrow them", async () => {
+  it("caps reads and says how to read all of it or narrow them", async () => {
     const s = session();
     const text = await h.run(s, `goto ${u("/big")}\nsnapshot`);
     expect(text.length).toBeLessThan(10_400);
     expect(text).toMatch(
-      /… cut at \d+ of \d+ characters: narrow it with `find/,
+      /… cut at \d+ of \d+ characters: --max all reads the first 75000, or narrow it with `find/,
     );
     const more = await h.run(s, "snapshot --max 30000");
     expect(more.length).toBeGreaterThan(20_000);
+    const all = await h.run(s, "snapshot --max all");
+    expect(all.length).toBeGreaterThan(70_000);
+    expect(all).toMatch(/… cut at \d+ of \d+ characters: narrow it with/);
     const small = await h.run(s, "get text --max 200");
     expect(small.length).toBeLessThan(500);
   });
@@ -860,13 +863,13 @@ describe("response limits", () => {
   it("keeps status lines and the trailer when output fills the response", async () => {
     const s = session();
     await h.run(s, `goto ${u("/misc")}`);
-    const big = `eval "() => 'x'.repeat(60000)" --max 50000`;
+    const big = `eval "() => 'x'.repeat(60000)" --max all`;
     const { text } = await h.call(
       s,
       `${big}\n${big}\nclick getByRole('button', { name: 'Nope' })`,
     );
-    expect(text.length).toBeLessThanOrEqual(50_000);
-    expect(text).toContain("the response is capped at 50000 characters");
+    expect(text.length).toBeLessThanOrEqual(80_000);
+    expect(text).toContain("the response is capped at 80000 characters");
     expect(text).toContain("✗ step 3: click");
     expect(text).toContain(`Page: ${u("/misc")} — "Misc"`);
   });

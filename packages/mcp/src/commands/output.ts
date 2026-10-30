@@ -2,28 +2,31 @@
 
 /** Default cap per read command */
 export const READ_CAP = 10_000;
-/** `--max` can raise a read's cap up to this */
-export const READ_CAP_MAX = 50_000;
-/** Cap for a whole response */
-export const RESPONSE_CAP = 50_000;
+/** `--max` can raise a read's cap up to this (`--max all`), a little under the response's cap so one such read fits whole with its status lines */
+export const READ_CAP_MAX = 75_000;
+/** Cap for a whole response. Claude Code refuses MCP results over 25K tokens, and snapshots run about 3 characters per token */
+export const RESPONSE_CAP = 80_000;
 /** Images per response (screenshots); more are left out with a note */
 export const MAX_IMAGES = 3;
 
 /** An error whose message is meant for the model as is */
 export class StepError extends Error {}
 
-/** The cap for a read: `--max N`, at most `READ_CAP_MAX` */
+/** The cap for a read: `--max N`, at most `READ_CAP_MAX`, which `--max all` asks for */
 export function readCap(flag: string | true | undefined): number {
   if (flag === undefined || flag === true) return READ_CAP;
+  if (flag === "all") return READ_CAP_MAX;
   const value = Number(flag);
   if (!Number.isInteger(value) || value <= 0) {
-    throw new StepError(`--max takes a number of characters, e.g. --max 2000`);
+    throw new StepError(
+      `--max takes a number of characters or all, e.g. --max 2000`,
+    );
   }
   return Math.min(value, READ_CAP_MAX);
 }
 
 /**
- * Cuts text to `max` characters at a line break when there's one nearby, and says how to narrow it
+ * Cuts text to `max` characters at a line break when there's one nearby, and says how to read all of it or narrow it
  */
 export function cap(
   text: string,
@@ -33,9 +36,13 @@ export function cap(
   if (text.length <= max) return text;
   let cut = text.lastIndexOf("\n", max);
   if (cut < max * 0.8) cut = max;
-  const more =
-    max < READ_CAP_MAX ? `, raise it with --max (up to ${READ_CAP_MAX})` : "";
-  return `${text.slice(0, cut)}\n… cut at ${cut} of ${text.length} characters: ${hint}${more}`;
+  const all =
+    max >= READ_CAP_MAX
+      ? ""
+      : text.length <= READ_CAP_MAX
+        ? "--max all reads all of it, or "
+        : `--max all reads the first ${READ_CAP_MAX}, or `;
+  return `${text.slice(0, cut)}\n… cut at ${cut} of ${text.length} characters: ${all}${hint}`;
 }
 
 /** Keeps the end of a log (the newest entries) when it's over `max` */

@@ -902,7 +902,7 @@ export const COMMANDS: CommandDef[] = [
   {
     name: "snapshot",
     usage:
-      "snapshot [<target>] [-i] [--depth N] [--max N]   # -i: interactive elements, headings, landmarks",
+      "snapshot [<target>] [-i] [--depth N] [--max N|all]   # -i: interactive elements, headings, landmarks",
     help: "Prints the accessibility tree with refs (e12, f1e3 in iframes) to use as targets. -i keeps interactive elements, landmarks, headings and cells. A target or --depth narrows it; refs stay valid either way.",
     flags: { i: false, depth: true, max: true },
     maxArgs: 1,
@@ -910,7 +910,7 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: "find",
-    usage: 'find "<text>" [--max N]   # snapshot lines containing the text',
+    usage: 'find "<text>" [--max N|all]   # snapshot lines containing the text',
     help: "Prints the snapshot lines whose name, text or URL contain the text (ignoring case), each with its ancestors, so you can act on a ref without a full snapshot.",
     flags: { max: true },
     maxArgs: 1,
@@ -932,7 +932,7 @@ export const COMMANDS: CommandDef[] = [
   {
     name: "get",
     usage:
-      "get text|value|count [<target>] | get attr <name> <target> | get url | get title",
+      "get text|value|count [<target>] [--max N|all] | get attr <name> <target> | get url | get title",
     help: "text: the target's visible text (the page's without a target). value: a field's value. count: how many elements match. attr: an attribute.",
     flags: { max: true },
     maxArgs: 3,
