@@ -3,6 +3,7 @@ import { type FormEvent, useState } from "react";
 import { ArrowLeftIcon } from "lucide-react";
 
 import {
+  normalizeBrowserLabel,
   sendBrowserControlMessage,
   useBrowserControl,
 } from "@browsermcp/extension-core/popup";
@@ -11,7 +12,7 @@ import { RELAY_PORTS, isValidRelayPort } from "@browsermcp/protocol";
 import { Button, ErrorAlert } from "./ui";
 
 /**
- * The popup's settings: only the port of a server started with `--port`. Add a setting only when users can't do without it, since each one is more for every user to read
+ * The popup's settings: this browser's name, for agents when several browsers or profiles are connected, and the port of a server started with `--port`. Add a setting only when users can't do without it, since each one is more for every user to read
  */
 export function SettingsScreen({ onBack }: { onBack: () => void }) {
   const [view, refresh] = useBrowserControl();
@@ -42,6 +43,18 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
       )}
       {view && (
         <div className="border-t px-4 py-3">
+          <LabelSetting
+            // Remounts with the saved name, so the field shows it
+            key={view.label ?? ""}
+            label={view.label}
+            onSave={(label) =>
+              run(() => sendBrowserControlMessage("setBrowserLabel", { label }))
+            }
+          />
+        </div>
+      )}
+      {view && (
+        <div className="border-t px-4 py-3">
           <PortSetting
             // Remounts with the saved port, so the field shows it
             key={view.relayPort ?? "default"}
@@ -53,6 +66,54 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * This browser profile's name, which agents see when several browsers or profiles are connected. Empty unsets it
+ */
+function LabelSetting({
+  label,
+  onSave,
+}: {
+  label: string | null;
+  onSave: (label: string | null) => void;
+}) {
+  const [value, setValue] = useState(label ?? "");
+  const unchanged = normalizeBrowserLabel(value) === label;
+
+  const save = (event: FormEvent) => {
+    event.preventDefault();
+    // Shows what's saved: trimmed and capped
+    const normalized = normalizeBrowserLabel(value);
+    setValue(normalized ?? "");
+    onSave(normalized);
+  };
+
+  return (
+    <form onSubmit={save} className="space-y-2">
+      <label htmlFor="settings-label" className="block font-medium">
+        Browser name
+      </label>
+      <div className="flex gap-2">
+        <input
+          id="settings-label"
+          className="h-8 w-full min-w-0 rounded-md border border-input bg-transparent px-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          placeholder="e.g. Work"
+          autoComplete="off"
+          value={value}
+          aria-describedby="settings-label-help"
+          onChange={(event) => setValue(event.target.value)}
+        />
+        <Button type="submit" variant="outline" disabled={unchanged}>
+          Save
+        </Button>
+      </div>
+      <p id="settings-label-help" className="text-xs text-muted-foreground">
+        Names this browser to AI agents when several browsers or profiles are
+        connected.
+      </p>
+    </form>
   );
 }
 

@@ -19,6 +19,8 @@ export type BrowserControlMessages = {
   allowDaemon: { input: { publicKey: string }; output: void };
   /** Sets the port to look for the Browser MCP server on (its `--port`), or `null` for the default ports */
   setRelayPort: { input: { port: number | null }; output: void };
+  /** Names this browser profile for agents when several are connected (`ExtensionState.label`), or unsets the name with `null` or an empty one. Trimmed and capped (`normalizeBrowserLabel()`) */
+  setBrowserLabel: { input: { label: string | null }; output: void };
   /** Makes a tab active and focuses its window */
   switchToTab: { input: { tabId: number }; output: void };
 };
@@ -86,6 +88,7 @@ export function handleBrowserControlMessages(
     resumeAgents: (_, sender) => fromPopup(sender).resume(),
     allowDaemon: ({ publicKey }, sender) => fromPopup(sender).allow(publicKey),
     setRelayPort: ({ port }, sender) => fromPopup(sender).setRelayPort(port),
+    setBrowserLabel: ({ label }, sender) => fromPopup(sender).setLabel(label),
     switchToTab: ({ tabId }, sender) => fromPopup(sender).switchToTab(tabId),
   };
 
