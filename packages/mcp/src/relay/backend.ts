@@ -30,6 +30,7 @@ import {
   ANOTHER_BROWSER_MESSAGE,
   noSuchTabMessage,
   PAUSED_MESSAGE,
+  TAB_DETACHED_MESSAGE,
   UPDATE_EXTENSION_MESSAGE,
   UPDATE_SERVER_MESSAGE,
   rejectedExtensionMessage,
@@ -448,12 +449,25 @@ export class RelayBackend implements BrowserBackend {
       }
     }
     this.agentTabs.add(tabId);
-    const targetInfo = await this.bridge.claim(tabId);
-    if (this.extension !== extension) {
-      throw new Error(ANOTHER_BROWSER_MESSAGE);
+    // The target can go before Playwright has its Page. Then the bridge either re-attaches it (a navigation that swapped the renderer), so claim it again, or lets it go (it detached again within the cooldown, e.g. another extension putting its frame back), so fail now rather than wait out the timeout
+    for (;;) {
+      const targetInfo = await this.bridge.claim(tabId);
+      const gone = this.bridge.whenGone(tabId);
+      if (this.extension !== extension) {
+        throw new Error(ANOTHER_BROWSER_MESSAGE);
+      }
+      await this.browser();
+      const page = await this.waitForPage(targetInfo.targetId, gone);
+      if (page) {
+        return page;
+      }
+      if (this.extension !== extension) {
+        throw new Error(ANOTHER_BROWSER_MESSAGE);
+      }
+      if (!this.bridge.isClaimed(tabId)) {
+        throw new Error(TAB_DETACHED_MESSAGE);
+      }
     }
-    await this.browser();
-    return await this.waitForPage(targetInfo.targetId);
   }
 
   async cdpSession(tabId: number): Promise<CDPSession> {
@@ -628,7 +642,11 @@ export class RelayBackend implements BrowserBackend {
     });
   }
 
-  private waitForPage(targetId: string): Promise<Page> {
+  /** The Page of a target once Playwright has it, or `null` if the target goes away first (`gone`) */
+  private waitForPage(
+    targetId: string,
+    gone: Promise<void> = new Promise(() => {}),
+  ): Promise<Page | null> {
     const page = this.pages.get(targetId);
     if (page && !page.isClosed()) {
       return Promise.resolve(page);
@@ -636,17 +654,29 @@ export class RelayBackend implements BrowserBackend {
     return new Promise((resolve, reject) => {
       const waiters = this.pageWaiters.get(targetId) ?? new Set();
       this.pageWaiters.set(targetId, waiters);
-      const waiter = (page: Page) => {
+      let settled = false;
+      const settle = () => {
+        settled = true;
         clearTimeout(timeout);
-        resolve(page);
-      };
-      const timeout = setTimeout(() => {
         waiters.delete(waiter);
         if (waiters.size === 0 && this.pageWaiters.get(targetId) === waiters) {
           this.pageWaiters.delete(targetId);
         }
+      };
+      const waiter = (page: Page) => {
+        settle();
+        resolve(page);
+      };
+      const timeout = setTimeout(() => {
+        settle();
         reject(new Error("The tab didn't become ready in time"));
       }, this.options.pageTimeoutMs ?? 15_000);
+      void gone.then(() => {
+        if (!settled) {
+          settle();
+          resolve(null);
+        }
+      });
       waiters.add(waiter);
     });
   }

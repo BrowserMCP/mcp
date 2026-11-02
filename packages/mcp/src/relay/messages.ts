@@ -16,6 +16,9 @@ export function rejectedExtensionMessage(extensionId: string): string {
   return `The extension ${extensionId} tried to connect but isn't allowed. If it's a development build, add its ID to BROWSER_MCP_EXTENSION_IDS (comma-separated) in the AI app's MCP config for @browsermcp/mcp and restart the AI app or reconnect the MCP server`;
 }
 
+export const TAB_DETACHED_MESSAGE =
+  "The tab detached from the debugger before it was ready, so Browser MCP let it go. Another extension on the page may keep putting its frame back. Try again, or use another tab";
+
 export function noSuchTabMessage(tabId: number): string {
   return `There's no tab ${tabId} in the connected browser. Run \`tab list\``;
 }

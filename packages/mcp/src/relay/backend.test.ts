@@ -23,6 +23,7 @@ import {
   ANOTHER_BROWSER_MESSAGE,
   noSuchTabMessage,
   rejectedExtensionMessage,
+  TAB_DETACHED_MESSAGE,
   UPDATE_EXTENSION_MESSAGE,
 } from "@/relay/messages";
 import { FakeChromium, FakeExtension } from "@/testing/fake-extension";
@@ -388,6 +389,43 @@ describe("RelayBackend", () => {
     await expect(backend.waitForPage("missing")).rejects.toThrow(
       "didn't become ready",
     );
+    expect(backend.pageWaiters.size).toBe(0);
+  });
+
+  it("keeps waiting for a tab that re-attaches, and stops at once when one detaches again before it's ready", async () => {
+    await relay.close();
+    // Long enough that only the detach can end the wait
+    relay = await startTestBackend({
+      pageTimeoutMs: 30_000,
+      reattachDelayMs: 10,
+    });
+    const extension = await connect();
+    const tabId = await extension.openTab("about:blank");
+    // Playwright never gets the Page, as when the target detaches while it's being identified (another extension putting its frame back)
+    const backend = relay.backend as unknown as {
+      identify(page: unknown): Promise<void>;
+      pageWaiters: Map<string, unknown>;
+    };
+    backend.identify = async () => {};
+    const started = Date.now();
+    const page = relay.backend.page(tabId);
+    const attaches = () =>
+      extension.requests.filter((request) => request.method === "attach")
+        .length;
+    const detachAfterAttach = async (count: number) => {
+      await expect.poll(attaches).toBe(count);
+      await expect.poll(() => backend.pageWaiters.size).toBe(1);
+      extension.event({
+        type: "detached",
+        data: { tabId, reason: "target_closed" },
+      });
+    };
+    // The first detach re-attaches: the command waits for the new target
+    await detachAfterAttach(1);
+    // The second, within the cooldown, lets the tab go
+    await detachAfterAttach(2);
+    await expect(page).rejects.toThrow(TAB_DETACHED_MESSAGE);
+    expect(Date.now() - started).toBeLessThan(5000);
     expect(backend.pageWaiters.size).toBe(0);
   });
 
