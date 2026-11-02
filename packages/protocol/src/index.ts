@@ -214,6 +214,8 @@ export type ExtensionState = {
   paused: boolean;
   /** `pending` until the user clicks **Allow** for this daemon's key; `tabs` is empty and every request fails meanwhile */
   pairing: "paired" | "pending";
+  /** Present only when the user limited agents to the tabs they enable: how many other tabs are open that agents may not use yet (`tabs` lists only the usable ones). A count, never their titles or URLs */
+  restricted?: { hiddenTabs: number };
 };
 
 // --- Daemon → extension requests ---

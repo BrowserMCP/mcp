@@ -9,7 +9,11 @@ import {
   pairingRequiredMessage,
 } from "@browsermcp/protocol";
 
-import { connectionStatusItem, pausedItem } from "../storage";
+import {
+  connectionStatusItem,
+  pausedItem,
+  redactHeadersItem,
+} from "../storage";
 import { TAB_GROUP_HEX } from "../types";
 import {
   BrowserControl,
@@ -1197,6 +1201,208 @@ describe("the custom port", () => {
       await expect(control.setRelayPort(port)).rejects.toThrow("Invalid port");
     }
     expect((await control.getView()).relayPort).toBeNull();
+  });
+});
+
+describe("header redaction", () => {
+  const lastCdpParams = (ws: FakeWebSocket) =>
+    (events(ws, "cdpEvent").at(-1) as { params?: unknown } | undefined)?.params;
+
+  const event = {
+    requestId: "1",
+    request: { headers: { Authorization: "Bearer secret", Accept: "*/*" } },
+  };
+
+  async function startAttached() {
+    chrome.addTab({ id: 1 });
+    const { control, ws } = await startPaired(await createDaemonKey());
+    await request(ws, { method: "attach", params: { tabId: 1 } });
+    return { control, ws };
+  }
+
+  it("redacts credentials in the events sent to the daemon unless the user turns it off", async () => {
+    const { control, ws } = await startAttached();
+    expect((await control.getView()).redactHeaders).toBe(true);
+
+    await chrome.debugger.onEvent.trigger(
+      { tabId: 1 },
+      "Network.requestWillBeSent",
+      event,
+    );
+    expect(lastCdpParams(ws)).toEqual({
+      requestId: "1",
+      request: {
+        headers: { Authorization: "(redacted: Bearer)", Accept: "*/*" },
+      },
+    });
+
+    await control.setRedactHeaders(false);
+    expect((await control.getView()).redactHeaders).toBe(false);
+    expect(await redactHeadersItem.getValue()).toBe(false);
+    await chrome.debugger.onEvent.trigger(
+      { tabId: 1 },
+      "Network.requestWillBeSent",
+      event,
+    );
+    expect(lastCdpParams(ws)).toEqual(event);
+
+    await control.setRedactHeaders(true);
+    await chrome.debugger.onEvent.trigger(
+      { tabId: 1 },
+      "Network.requestWillBeSent",
+      event,
+    );
+    expect(JSON.stringify(lastCdpParams(ws))).not.toContain("secret");
+  });
+
+  it("reads the setting when the service worker starts", async () => {
+    await redactHeadersItem.setValue(false);
+    const { ws } = await startAttached();
+    await vi.waitFor(async () => {
+      await chrome.debugger.onEvent.trigger(
+        { tabId: 1 },
+        "Network.requestWillBeSent",
+        event,
+      );
+      expect(lastCdpParams(ws)).toEqual(event);
+    });
+  });
+});
+
+describe("restricting agents to enabled tabs", () => {
+  async function startRestricted() {
+    chrome.addTab({ id: 1, url: "https://example.com/" });
+    chrome.addTab({ id: 2, url: "https://example.org/" });
+    const started = await startPaired(await createDaemonKey());
+    await started.control.setRestrictTabs(true);
+    return started;
+  }
+
+  it("gives agents every tab until the user restricts them", async () => {
+    chrome.addTab({ id: 1, url: "https://example.com/" });
+    const { control, ws } = await startPaired(await createDaemonKey());
+    expect((await control.getView()).tabAccess.restricted).toBe(false);
+    expect(await latestState(ws)).not.toHaveProperty("restricted");
+    expect(
+      await request(ws, { method: "attach", params: { tabId: 1 } }),
+    ).not.toHaveProperty("error");
+  });
+
+  it("offers agents only the tabs the user enables, for as long as they chose", async () => {
+    const { control, ws } = await startRestricted();
+    await vi.waitFor(async () =>
+      expect(await latestState(ws)).toMatchObject({
+        tabs: [],
+        restricted: { hiddenTabs: 2 },
+      }),
+    );
+    expect(
+      (await request(ws, { method: "attach", params: { tabId: 1 } })).error,
+    ).toMatch(/hasn't enabled it/);
+    expect(chrome.debugger.attach).not.toHaveBeenCalled();
+
+    await control.setDefaultGrantMinutes(5);
+    await control.enableTab(1);
+    const view = await control.getView();
+    expect(view.tabAccess.enabledTabs).toMatchObject([{ tabId: 1 }]);
+    expect(
+      view.tabAccess.enabledTabs[0].expiresAt - Date.now(),
+    ).toBeLessThanOrEqual(5 * 60_000);
+    await vi.waitFor(async () => {
+      const state = await latestState(ws);
+      expect(state.tabs.map((tab) => tab.tabId)).toEqual([1]);
+      expect(state.restricted).toEqual({ hiddenTabs: 1 });
+    });
+    expect(
+      await request(ws, { method: "attach", params: { tabId: 1 } }),
+    ).not.toHaveProperty("error");
+    expect(
+      (await request(ws, { method: "attach", params: { tabId: 2 } })).error,
+    ).toMatch(/hasn't enabled it/);
+
+    await control.disableTab(1);
+    await vi.waitFor(() =>
+      expect(events(ws, "detached")).toContainEqual({
+        tabId: 1,
+        reason: "not_allowed",
+      }),
+    );
+    expect((await control.getView()).tabAccess.enabledTabs).toEqual([]);
+    expect(
+      (await request(ws, { method: "attach", params: { tabId: 1 } })).error,
+    ).toMatch(/hasn't enabled it/);
+  });
+
+  it("stops offering a tab when the time it was enabled for is over", async () => {
+    const { control, ws } = await startRestricted();
+    await control.setDefaultGrantMinutes(1);
+    await control.enableTab(1);
+    const now = Date.now();
+    const spy = vi.spyOn(Date, "now").mockReturnValue(now + 61_000);
+    try {
+      expect(
+        (await request(ws, { method: "attach", params: { tabId: 1 } })).error,
+      ).toMatch(/hasn't enabled it/);
+      expect((await control.getView()).tabAccess.enabledTabs).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("keeps the tabs agents open", async () => {
+    const { control, ws } = await startRestricted();
+    const created = await request(ws, {
+      method: "createTab",
+      params: { app: { id: "claude-code", name: "Claude Code" } },
+    });
+    const tabId = (created.result as { tabId: number }).tabId;
+    expect(
+      await request(ws, { method: "attach", params: { tabId } }),
+    ).not.toHaveProperty("error");
+    expect((await control.getView()).tabAccess.enabledTabs).toEqual([]);
+  });
+
+  it("doesn't let an agent keep a tab by grouping it", async () => {
+    const { control, ws } = await startRestricted();
+    await control.setDefaultGrantMinutes(1);
+    await control.enableTab(1);
+    await request(ws, {
+      method: "groupTab",
+      params: { tabId: 1, app: { id: "claude-code", name: "Claude Code" } },
+    });
+    const spy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61_000);
+    try {
+      expect(
+        (await request(ws, { method: "attach", params: { tabId: 1 } })).error,
+      ).toMatch(/hasn't enabled it/);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(
+      (
+        await request(ws, {
+          method: "groupTab",
+          params: { tabId: 2, app: null },
+        })
+      ).error,
+    ).toMatch(/hasn't enabled it/);
+  });
+
+  it("refuses browser pages and times the user can't choose", async () => {
+    chrome.addTab({ id: 3, url: "chrome://settings/" });
+    const { control } = await startRestricted();
+    await expect(control.enableTab(3)).rejects.toThrow(/browser page/);
+    for (const minutes of [0, 1.5, 1441, Number.NaN]) {
+      await expect(control.setDefaultGrantMinutes(minutes)).rejects.toThrow(
+        /minutes/,
+      );
+    }
+    await control.setDefaultGrantMinutes(15);
+    expect((await control.getView()).tabAccess.defaultMinutes).toBe(15);
+    await control.enableTab(1);
+    const [enabled] = (await control.getView()).tabAccess.enabledTabs;
+    expect(enabled.expiresAt - Date.now()).toBeGreaterThan(14 * 60_000);
+    expect(enabled.expiresAt - Date.now()).toBeLessThanOrEqual(15 * 60_000);
   });
 });
 

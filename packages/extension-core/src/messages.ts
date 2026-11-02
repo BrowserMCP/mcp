@@ -19,6 +19,16 @@ export type BrowserControlMessages = {
   allowDaemon: { input: { publicKey: string }; output: void };
   /** Sets the port to look for the Browser MCP server on (its `--port`), or `null` for the default ports */
   setRelayPort: { input: { port: number | null }; output: void };
+  /** Turns on or off the redaction of credentials (cookies, authorization, CSRF tokens) in the headers and cookies sent to the Browser MCP server */
+  setRedactHeaders: { input: { enabled: boolean }; output: void };
+  /** Restricts agents to the tabs the user enables (`true`), or gives them every tab again */
+  setRestrictTabs: { input: { restricted: boolean }; output: void };
+  /** Sets how many minutes **Enable for this tab** lasts */
+  setDefaultGrantMinutes: { input: { minutes: number }; output: void };
+  /** Lets agents use the tab for the default time */
+  enableTab: { input: { tabId: number }; output: void };
+  /** Stops agents using the tab */
+  disableTab: { input: { tabId: number }; output: void };
   /** Makes a tab active and focuses its window */
   switchToTab: { input: { tabId: number }; output: void };
 };
@@ -86,6 +96,14 @@ export function handleBrowserControlMessages(
     resumeAgents: (_, sender) => fromPopup(sender).resume(),
     allowDaemon: ({ publicKey }, sender) => fromPopup(sender).allow(publicKey),
     setRelayPort: ({ port }, sender) => fromPopup(sender).setRelayPort(port),
+    setRedactHeaders: ({ enabled }, sender) =>
+      fromPopup(sender).setRedactHeaders(enabled),
+    setRestrictTabs: ({ restricted }, sender) =>
+      fromPopup(sender).setRestrictTabs(restricted),
+    setDefaultGrantMinutes: ({ minutes }, sender) =>
+      fromPopup(sender).setDefaultGrantMinutes(minutes),
+    enableTab: ({ tabId }, sender) => fromPopup(sender).enableTab(tabId),
+    disableTab: ({ tabId }, sender) => fromPopup(sender).disableTab(tabId),
     switchToTab: ({ tabId }, sender) => fromPopup(sender).switchToTab(tabId),
   };
 

@@ -17,6 +17,11 @@ function fakeBrowserControl() {
     resume: vi.fn(async () => {}),
     allow: vi.fn(async () => {}),
     setRelayPort: vi.fn(async () => {}),
+    setRedactHeaders: vi.fn(async () => {}),
+    setRestrictTabs: vi.fn(async () => {}),
+    setDefaultGrantMinutes: vi.fn(async () => {}),
+    enableTab: vi.fn(async () => {}),
+    disableTab: vi.fn(async () => {}),
     switchToTab: vi.fn(async () => {}),
     connection: { connectNow: vi.fn() },
   };

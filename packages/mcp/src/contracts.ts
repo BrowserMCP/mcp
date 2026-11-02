@@ -111,6 +111,8 @@ export interface BrowserBackend {
   tabs(): ExposedTab[];
   /** The tab the extension reports with this ID, waiting briefly for one it doesn't list yet: it reports a new tab a moment after it appears */
   findTab(tabId: number): Promise<ExposedTab | undefined>;
+  /** When the user limited agents to the tabs they enable: how many other tabs are open that they may not use yet. `null` when every tab is available */
+  restriction?(): { hiddenTabs: number } | null;
 
   /** Opens a background tab in the app's group. Doesn't attach the debugger */
   createTab(options: { url?: string; app: AppInfo }): Promise<number>;

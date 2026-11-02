@@ -74,6 +74,42 @@ export type BrowserControlApp = {
   tabs: { tabId: number; title: string; url: string; attached: boolean }[];
 };
 
+/** The shortest and longest time the user can enable a tab for */
+export const MIN_GRANT_MINUTES = 1;
+export const MAX_GRANT_MINUTES = 1440;
+
+export function isValidGrantMinutes(minutes: number): boolean {
+  return (
+    Number.isInteger(minutes) &&
+    minutes >= MIN_GRANT_MINUTES &&
+    minutes <= MAX_GRANT_MINUTES
+  );
+}
+
+/** Which tabs agents may use, as the popup shows it */
+export type TabAccessView = {
+  /** Agents get only the tabs the user enables, not every tab */
+  restricted: boolean;
+  /** How many minutes **Enable for this tab** lasts */
+  defaultMinutes: number;
+  /** The active tab of the browser window the popup is in */
+  currentTab: {
+    tabId: number;
+    title: string;
+    /** When agents stop being able to use it, if the user enabled it (ms since the epoch) */
+    enabledUntil: number | null;
+    /** Not for browser pages, which agents never get */
+    canEnable: boolean;
+  } | null;
+  /** The tabs the user enabled, soonest to stop first */
+  enabledTabs: {
+    tabId: number;
+    title: string;
+    url: string;
+    expiresAt: number;
+  }[];
+};
+
 /** What the popup shows (`getBrowserControl`) */
 export type BrowserControlView = {
   connection: ConnectionStatus;
@@ -82,5 +118,8 @@ export type BrowserControlView = {
   paused: boolean;
   /** The custom port to look for the daemon on, or `null` for the default ports */
   relayPort: number | null;
+  /** Whether credentials in headers and cookies are redacted before they leave the browser */
+  redactHeaders: boolean;
+  tabAccess: TabAccessView;
   apps: BrowserControlApp[];
 };

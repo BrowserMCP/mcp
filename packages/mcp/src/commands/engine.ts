@@ -36,6 +36,10 @@ import {
   type Token,
   tokenize,
 } from "@/commands/parser";
+import {
+  hiddenTabsMessage,
+  moreHiddenTabsNote,
+} from "@/commands/restricted-tabs";
 import { TabState } from "@/commands/tab-state";
 import type {
   BrowserBackend,
@@ -615,7 +619,8 @@ class Engine implements CommandEngine {
 
   private async listTabs(session: Session): Promise<string> {
     const tabs = this.backend.tabs();
-    if (!tabs.length) return "(no tabs)";
+    const hidden = this.backend.restriction?.()?.hiddenTabs ?? 0;
+    if (!tabs.length) return hidden ? hiddenTabsMessage(hidden) : "(no tabs)";
     const current = this.currentTab(session);
     // The extension reports titles and URLs a moment after they change, so tabs agents use show their page's own
     const live = await Promise.all(
@@ -634,7 +639,8 @@ class Engine implements CommandEngine {
         ].filter(Boolean);
         return `${tab.tabId === current ? "*" : " "} ${tab.tabId} ${JSON.stringify(truncate(tab.title, 80))} — ${truncate(tab.url, 120)}${marks.length ? ` (${marks.join(", ")})` : ""}`;
       })
-      .join("\n");
+      .join("\n")
+      .concat(hidden ? `\n${moreHiddenTabsNote(hidden)}` : "");
   }
 
   private pruneClosedTabs() {

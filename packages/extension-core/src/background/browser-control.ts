@@ -16,16 +16,23 @@ import {
 import {
   appGroupsItem,
   connectionStatusItem,
+  defaultGrantMinutesItem,
   lastActiveAppItem,
   legacyPortItem,
   legacyServerItem,
   pausedItem,
+  redactHeadersItem,
   relayPortItem,
+  restrictTabsItem,
 } from "../storage";
-import type {
-  BrowserControlApp,
-  BrowserControlView,
-  ConnectionStatus,
+import {
+  type BrowserControlApp,
+  type BrowserControlView,
+  type ConnectionStatus,
+  isValidGrantMinutes,
+  MAX_GRANT_MINUTES,
+  MIN_GRANT_MINUTES,
+  type TabAccessView,
 } from "../types";
 import { updateBadge } from "./badge";
 import { getDeniedCdpMessage, getNavigationUrl } from "./cdp-policy";
@@ -38,6 +45,16 @@ import {
   isExposedUrl,
 } from "./exposure";
 import { addPairedKey, isPairedKey, verifyDaemonSignature } from "./pairing";
+import { redactCdpEvent } from "./redact";
+import {
+  getActiveGrants,
+  getAllowedTabIds,
+  grantTab,
+  forgetTabAccess,
+  inheritAccess,
+  markAgentTab,
+  revokeTab,
+} from "./tab-access";
 import {
   forgetGroup,
   forgetTab,
@@ -97,6 +114,8 @@ export class BrowserControl {
   #stateTimer: ReturnType<typeof setTimeout> | undefined;
   #onEvent: BrowserControlOptions["onEvent"];
   #onActivity: BrowserControlOptions["onActivity"];
+  /** Whether credentials in the headers and cookies of CDP events are redacted before they leave the browser. On until the setting is read, so nothing leaks while the service worker starts */
+  #redactHeaders = true;
 
   constructor(options: BrowserControlOptions = {}) {
     const {
@@ -110,7 +129,13 @@ export class BrowserControl {
     this.#onActivity = onActivity;
     this.debugger = new DebuggerSessions(
       {
-        onEvent: (data) => this.#emit({ type: "cdpEvent", data }),
+        onEvent: (data) =>
+          this.#emit({
+            type: "cdpEvent",
+            data: this.#redactHeaders
+              ? { ...data, params: redactCdpEvent(data.method, data.params) }
+              : data,
+          }),
         onDetach: (tabId, reason) => void this.#onDebuggerDetach(tabId, reason),
         onChange: () => {
           void this.#updateBadge();
@@ -184,6 +209,8 @@ export class BrowserControl {
     const onAlarm = (alarm: Browser.alarms.Alarm) => {
       if (alarm.name === WATCHDOG_ALARM) {
         this.connection.watchdog();
+        // Tabs the user enabled for a while stop being enabled
+        void this.#enforceRules();
       }
     };
     const onStartup = () => this.connection.ensureRunning();
@@ -216,6 +243,7 @@ export class BrowserControl {
   }
 
   async #init(): Promise<void> {
+    this.#redactHeaders = await redactHeadersItem.getValue();
     // The service worker restarted, so a connection the popup would show is gone (BrowserMCP/mcp#192)
     const status = await connectionStatusItem.getValue();
     if (status.state === "connected") {
@@ -336,6 +364,7 @@ export class BrowserControl {
   async #createTab(url = "about:blank", app: AppInfo) {
     await this.#requireAllowedUrl(url);
     const tabId = await openAgentTab(url, app.id);
+    await markAgentTab(tabId);
     await groupTab(tabId, app);
     this.#scheduleState();
     return { tabId };
@@ -364,7 +393,9 @@ export class BrowserControl {
       `Agents can't use tab ${tabId}: ${
         tab.incognito && !rules.incognitoAccess
           ? "it's incognito, and the extension isn't allowed in incognito"
-          : "it's discarded or a browser page"
+          : rules.allowedTabIds && !rules.allowedTabIds.has(tabId)
+            ? "the user hasn't enabled it for agents, or the time they enabled it for is over. Ask the user to click Enable control for this tab in the Browser MCP popup, or use a tab of your own (`tab new <url>`)"
+            : "it's discarded or a browser page"
       }`,
     );
   }
@@ -454,7 +485,7 @@ export class BrowserControl {
   }
 
   async #onTabRemoved(tabId: number): Promise<void> {
-    await forgetTab(tabId);
+    await Promise.all([forgetTab(tabId), forgetTabAccess(tabId)]);
     this.#scheduleState();
   }
 
@@ -532,6 +563,7 @@ export class BrowserControl {
     if (!isExposedUrl(url, rules.fileAccess)) {
       return;
     }
+    await inheritAccess(sourceTabId, tabId);
     const window = await browser.windows.get(tab.windowId).catch(() => null);
     if (window?.type === "popup") {
       await moveIntoWindow(tabId, opener.windowId).catch((error: unknown) => {
@@ -580,21 +612,27 @@ export class BrowserControl {
       getExposureRules(),
       appGroupsItem.getValue(),
     ]);
+    const exposed = tabs.filter((tab) => isExposedTab(tab, rules));
+    const restricted = rules.allowedTabIds !== null;
+    const hiddenTabs = restricted
+      ? tabs.filter((tab) =>
+          isExposedTab(tab, { ...rules, allowedTabIds: null }),
+        ).length - exposed.length
+      : 0;
     return {
       paused,
       pairing: "paired",
-      tabs: tabs
-        .filter((tab) => isExposedTab(tab, rules))
-        .map((tab) => ({
-          tabId: tab.id!,
-          windowId: tab.windowId,
-          url: getTabUrl(tab),
-          title: tab.title ?? "",
-          active: tab.active,
-          pinned: tab.pinned,
-          ...(groups.tabApps[tab.id!] && { appId: groups.tabApps[tab.id!] }),
-          attached: this.debugger.isAttached(tab.id!),
-        })),
+      ...(restricted && { restricted: { hiddenTabs } }),
+      tabs: exposed.map((tab) => ({
+        tabId: tab.id!,
+        windowId: tab.windowId,
+        url: getTabUrl(tab),
+        title: tab.title ?? "",
+        active: tab.active,
+        pinned: tab.pinned,
+        ...(groups.tabApps[tab.id!] && { appId: groups.tabApps[tab.id!] }),
+        attached: this.debugger.isAttached(tab.id!),
+      })),
     };
   }
 
@@ -656,20 +694,72 @@ export class BrowserControl {
     this.connection.reconnect();
   }
 
+  /** Turns the redaction of credentials in the headers and cookies sent to the daemon on or off */
+  async setRedactHeaders(enabled: boolean): Promise<void> {
+    this.#redactHeaders = enabled;
+    await redactHeadersItem.setValue(enabled);
+  }
+
+  /** Restricts agents to the tabs the user enables, or gives them every tab again */
+  async setRestrictTabs(restricted: boolean): Promise<void> {
+    await restrictTabsItem.setValue(restricted);
+    await this.#enforceRules();
+  }
+
+  /** Sets how long **Enable for this tab** lasts, in minutes */
+  async setDefaultGrantMinutes(minutes: number): Promise<void> {
+    if (!isValidGrantMinutes(minutes)) {
+      throw new Error(
+        `Enter a time from ${MIN_GRANT_MINUTES} to ${MAX_GRANT_MINUTES} minutes`,
+      );
+    }
+    await defaultGrantMinutesItem.setValue(minutes);
+  }
+
+  /** Lets agents use the tab for the default time */
+  async enableTab(tabId: number): Promise<void> {
+    const tab = await browser.tabs.get(tabId).catch(() => null);
+    const rules = { ...(await getExposureRules()), allowedTabIds: null };
+    if (!tab || !isExposedTab(tab, rules)) {
+      throw new Error("Agents can't use this tab: it's a browser page");
+    }
+    await grantTab(tabId);
+    this.#scheduleState();
+  }
+
+  /** Stops agents using the tab, detaching them from it */
+  async disableTab(tabId: number): Promise<void> {
+    await revokeTab(tabId);
+    await this.#enforceRules();
+  }
+
   async switchToTab(tabId: number): Promise<void> {
     await focusTab(await browser.tabs.get(tabId));
   }
 
   /** What the popup shows */
   async getView(): Promise<BrowserControlView> {
-    const [connection, legacyServer, paused, groups, relayPort] =
-      await Promise.all([
-        connectionStatusItem.getValue(),
-        legacyServerItem.getValue(),
-        pausedItem.getValue(),
-        appGroupsItem.getValue(),
-        relayPortItem.getValue(),
-      ]);
+    const [
+      connection,
+      legacyServer,
+      paused,
+      groups,
+      relayPort,
+      redactHeaders,
+      restricted,
+      defaultMinutes,
+      grants,
+    ] = await Promise.all([
+      connectionStatusItem.getValue(),
+      legacyServerItem.getValue(),
+      pausedItem.getValue(),
+      appGroupsItem.getValue(),
+      relayPortItem.getValue(),
+      redactHeadersItem.getValue(),
+      restrictTabsItem.getValue(),
+      defaultGrantMinutesItem.getValue(),
+      getActiveGrants(),
+    ]);
     const tabs = await browser.tabs.query({});
     const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
 
@@ -696,17 +786,54 @@ export class BrowserControl {
       }))
       .filter((app) => app.tabs.length > 0);
 
+    const rules = { ...(await getExposureRules()), allowedTabIds: null };
+    const [current] = await browser.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    const tabAccess: TabAccessView = {
+      restricted,
+      defaultMinutes,
+      currentTab:
+        current?.id === undefined
+          ? null
+          : {
+              tabId: current.id,
+              title: current.title || getTabUrl(current),
+              enabledUntil: grants.get(current.id) ?? null,
+              canEnable: isExposedTab(current, rules),
+            },
+      enabledTabs: [...grants]
+        .flatMap(([tabId, expiresAt]) => {
+          const tab = tabsById.get(tabId);
+          return tab
+            ? [
+                {
+                  tabId,
+                  title: tab.title || getTabUrl(tab),
+                  url: getTabUrl(tab),
+                  expiresAt,
+                },
+              ]
+            : [];
+        })
+        .sort((a, b) => a.expiresAt - b.expiresAt),
+    };
+
     return {
       connection,
       legacyServer,
       paused,
       relayPort,
+      redactHeaders,
+      tabAccess,
       apps,
     };
   }
 }
 
 async function getExposureRules(): Promise<ExposureRules> {
+  const allowedTabIds = await getAllowedTabIds();
   const fileAccess = await browser.extension
     .isAllowedFileSchemeAccess()
     .then(Boolean)
@@ -715,7 +842,7 @@ async function getExposureRules(): Promise<ExposureRules> {
     .isAllowedIncognitoAccess()
     .then(Boolean)
     .catch(() => false);
-  return { fileAccess, incognitoAccess };
+  return { fileAccess, incognitoAccess, allowedTabIds };
 }
 
 /**

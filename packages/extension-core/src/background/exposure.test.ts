@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Browser } from "wxt/browser";
 
-import { isExposedTab, isExposedUrl } from "./exposure";
+import { type ExposureRules, isExposedTab, isExposedUrl } from "./exposure";
 
-const rules = { fileAccess: false, incognitoAccess: false };
+const rules: ExposureRules = {
+  fileAccess: false,
+  incognitoAccess: false,
+  allowedTabIds: null,
+};
 
 function tab(overrides: Partial<Browser.tabs.Tab> = {}): Browser.tabs.Tab {
   return {
@@ -79,6 +83,20 @@ describe("which tabs agents may use", () => {
     ).toBe(true);
     expect(
       isExposedTab(tab({ url: "", pendingUrl: "chrome://newtab/" }), rules),
+    ).toBe(false);
+  });
+});
+
+describe("restricting agents to the tabs the user enabled", () => {
+  it("allows only those tabs, and still none that the other rules refuse", () => {
+    const restricted = { ...rules, allowedTabIds: new Set([1, 3]) };
+    expect(isExposedTab(tab({ id: 1 }), restricted)).toBe(true);
+    expect(isExposedTab(tab({ id: 2 }), restricted)).toBe(false);
+    expect(
+      isExposedTab(tab({ id: 3, url: "chrome://settings/" }), restricted),
+    ).toBe(false);
+    expect(
+      isExposedTab(tab({ id: 2 }), { ...rules, allowedTabIds: new Set() }),
     ).toBe(false);
   });
 });
