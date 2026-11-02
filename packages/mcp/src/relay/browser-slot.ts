@@ -35,8 +35,27 @@ export class BrowserSlot {
   connection: ExtensionConnection | null = null;
   /** The connection has sent `state` since `hello` (whose state is always `pending`, before the daemon proves its key) */
   stateReceived = false;
-  /** Tabs agents used in this browser (opened, selected, claimed, or dragged into an app's group) and that are still open */
-  agentTabs = new Set<number>();
+
+  // --- Identity: what tells this browser apart from others when it reconnects ---
+
+  /** `hello.browserId`, from extensions that send one (2.3 on) */
+  browserId: string | undefined;
+  /** Without a `browserId`: the windows it reported last (window IDs are unique within a browser process, across its profiles), with its `BrowserInfo` name and user agent */
+  windowIds = new Set<number>();
+  /** A connection without a `browserId` was taken for this browser before it reported any windows: its first paired `state` confirms it, or moves it to another slot */
+  unconfirmed = false;
+  /** The label the user gave it (`state.label`), kept while it's away */
+  userLabel: string | undefined;
+  lastFocusedAt: number | undefined;
+  connectedAt = 0;
+  /** When it last disconnected, so calls wait briefly for it to come back */
+  disconnectedAt = 0;
+  /** Its tabs' public IDs (the backend's), by Chrome tab ID */
+  readonly publicIds = new Map<number, number>();
+  /** Its tabs' URLs when it last disconnected, by Chrome tab ID: on its return, a tab with another URL is taken for another tab (Chrome restarted and numbers its tabs anew) */
+  urlsWhenLeft = new Map<number, string>();
+  /** Chrome tab IDs it had public IDs for when it reconnected, until a paired state shows whether they still name the same tabs (`urlsWhenLeft`) */
+  unverified = new Set<number>();
 
   private browserPromise: Promise<Browser> | null = null;
   private pages = new Map<string, Page>();
@@ -44,6 +63,11 @@ export class BrowserSlot {
 
   constructor(
     readonly id: string,
+    /** `BrowserInfo.name`, e.g. `Chrome` */
+    readonly name: string,
+    readonly userAgent: string,
+    /** The daemon's name for it when the user gave none: `Chrome`, `Chrome 2`… */
+    readonly defaultLabel: string,
     private readonly options: BrowserSlotOptions,
   ) {
     this.bridge = new CdpBridge({
@@ -59,16 +83,26 @@ export class BrowserSlot {
     return this.connection?.state.tabs ?? [];
   }
 
-  /** Whether an agent is using this browser: a tab is claimed, or (with `countAgentTabs`) a tab agents used is still open */
-  inUse(countAgentTabs: boolean): boolean {
-    if (this.bridge.claimedTabs().length > 0) {
-      return true;
-    }
-    if (!countAgentTabs) {
+  /** What agents call it: the user's label, else the daemon's. While its connection is a guess (`unconfirmed`), just its browser's name, since it may be another browser */
+  get label(): string {
+    return this.unconfirmed ? this.name : (this.userLabel ?? this.defaultLabel);
+  }
+
+  /** Connected, paired and not paused: agents can use it */
+  get usable(): boolean {
+    const state = this.connection?.state;
+    return !!state && state.pairing === "paired" && !state.paused;
+  }
+
+  /** Whether a connection's `hello` and windows could be this browser's: `undefined` when the windows can't tell (either side knows none) */
+  matches(name: string, userAgent: string, windowIds: Set<number>) {
+    if (name !== this.name || userAgent !== this.userAgent) {
       return false;
     }
-    const open = new Set(this.tabs().map((tab) => tab.tabId));
-    return [...this.agentTabs].some((tabId) => open.has(tabId));
+    if (windowIds.size === 0 || this.windowIds.size === 0) {
+      return undefined;
+    }
+    return [...windowIds].some((id) => this.windowIds.has(id));
   }
 
   /** Playwright connected to this browser's bridge, connecting on first use */

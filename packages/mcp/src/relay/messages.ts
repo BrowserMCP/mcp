@@ -9,8 +9,23 @@ export const UPDATE_EXTENSION_MESSAGE = `The Browser MCP extension is outdated. 
 
 export const UPDATE_SERVER_MESSAGE = `The Browser MCP extension is newer than this server. Use @browsermcp/mcp@latest in the AI app's MCP config and restart the AI app. Steps: ${HOME_PAGE}`;
 
-export const ANOTHER_BROWSER_MESSAGE =
-  "Another browser or profile was connected to Browser MCP and took over. Select a tab again (`tab list`, `tab select <id>`) or use `goto <url>`";
+/** A tab or browser named by an agent belongs to a browser (profile) that isn't connected now */
+export function browserDisconnectedMessage(label: string): string {
+  return `${label} disconnected from Browser MCP. It reconnects by itself while it's open; meanwhile use a tab of another browser (\`tab list\`, \`browser list\`)`;
+}
+
+export function noSuchBrowserMessage(name: string): string {
+  return `There's no browser ${JSON.stringify(name)}. Run \`browser list\``;
+}
+
+export function ambiguousBrowserMessage(name: string, ids: string[]): string {
+  return `Several browsers are named ${JSON.stringify(name)}: use an ID (${ids.join(", ")}) from \`browser list\``;
+}
+
+/** The reason `anotherBrowser` closes a browser with, when `MAX_BROWSERS` are connected */
+export function tooManyBrowsersReason(max: number): string {
+  return `Browser MCP is connected to ${max} browsers already`;
+}
 
 export function rejectedExtensionMessage(extensionId: string): string {
   return `The extension ${extensionId} tried to connect but isn't allowed. If it's a development build, add its ID to BROWSER_MCP_EXTENSION_IDS (comma-separated) in the AI app's MCP config for @browsermcp/mcp and restart the AI app or reconnect the MCP server`;
@@ -19,6 +34,7 @@ export function rejectedExtensionMessage(extensionId: string): string {
 export const TAB_DETACHED_MESSAGE =
   "The tab detached from the debugger before it was ready, so Browser MCP let it go. Another extension on the page may keep putting its frame back. Try again, or use another tab";
 
-export function noSuchTabMessage(tabId: number): string {
-  return `There's no tab ${tabId} in the connected browser. Run \`tab list\``;
+/** `browser`: the tab's browser's label, while several are connected */
+export function noSuchTabMessage(tabId: number, browser?: string): string {
+  return `There's no tab ${tabId} in ${browser ?? "the connected browser"}. Run \`tab list\``;
 }

@@ -32,7 +32,7 @@ The Chrome Web Store version updates itself. A build you load yourself doesn't: 
    pnpm build
    ```
 
-2. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick `apps/extension/.output/chrome-mv3`. It's called "Browser MCP (self-built)". If the Chrome Web Store's Browser MCP is installed in the same profile, turn it off, since only one of them can use the server at a time.
+2. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick `apps/extension/.output/chrome-mv3`. It's called "Browser MCP (self-built)". If the Chrome Web Store's Browser MCP is installed in the same profile, turn it off, or both would connect to the server as two browsers. Other Chrome profiles with Browser MCP connect too: agents can use tabs in each.
 3. In your AI app's MCP config, run the server you built instead of the one on npm:
 
    ```json

@@ -61,9 +61,20 @@ export interface StepContext {
   agentCdp(): Promise<NonNullable<TabState["cdp"]>>;
   tabs: {
     list(): Promise<string>;
-    create(url?: string): Promise<number>;
+    /** Opens a tab of the agent's own, in `browser` (an ID or label) or where the session's new tabs open */
+    create(url?: string, browser?: string): Promise<number>;
+    /** The label of the tab's browser while several browsers are connected, else undefined */
+    browserOf(tabId: number): string | undefined;
     select(tabId: number): Promise<void>;
     close(tabId?: number): Promise<void>;
+  };
+  /** The connected browsers (Chrome profiles) */
+  browsers: {
+    /** Whether several are connected */
+    several(): boolean;
+    list(): string;
+    /** Opens the session's new tabs in this browser (an ID or label); returns its label */
+    use(name: string): string;
   };
 }
 
@@ -73,6 +84,8 @@ export type CommandDef = {
   usage: string;
   /** False when another command's usage line covers this one */
   listed?: boolean;
+  /** Listed by `help` only while several browsers are connected */
+  severalBrowsers?: boolean;
   /** Details for `help <command>` */
   help: string;
   flags?: FlagSpec;
@@ -875,11 +888,16 @@ export const COMMANDS: CommandDef[] = [
     help: "Lists the browser's tabs (* marks yours), opens a background tab of your own, switches to a tab (one of the user's too), or closes a tab you opened.",
     noPage: true,
     navigates: true,
+    flags: { browser: true },
     maxArgs: 2,
     whileDialog: true,
     timeoutMs: () => NAVIGATION_STEP_MS,
     async run(ctx) {
       const sub = positional(ctx.args, 0, "list, new, select or close");
+      const browser = ctx.args.flags.browser;
+      if (browser !== undefined && sub !== "new") {
+        throw new StepError("--browser goes with `tab new`");
+      }
       const id = () => {
         const value = Number(positional(ctx.args, 1, "<tabId>"));
         if (!Number.isInteger(value))
@@ -891,12 +909,32 @@ export const COMMANDS: CommandDef[] = [
         const url = ctx.args.positional[1]?.text;
         const tabId = await ctx.tabs.create(
           url ? normalizeUrl(url) : undefined,
+          typeof browser === "string" ? browser : undefined,
         );
-        ctx.note(`tab ${tabId}`);
+        const label = ctx.tabs.browserOf(tabId);
+        ctx.note(label ? `tab ${tabId} in ${label}` : `tab ${tabId}`);
       } else if (sub === "select") await ctx.tabs.select(id());
       else if (sub === "close") {
         await ctx.tabs.close(ctx.args.positional[1] ? id() : undefined);
       } else throw new StepError("tab takes list, new, select or close");
+    },
+  },
+  {
+    name: "browser",
+    usage:
+      'browser list | browser use "<name>"|<id>   # the connected browsers (Chrome profiles), and which one new tabs open in',
+    help: 'Lists the connected browsers (Chrome profiles), * marking the one your new tabs open in, or chooses it. New tabs open in the browser of the tab you selected or opened last, else the one the user used last; `browser use` changes that until you select a tab elsewhere, and `tab new --browser "<name>"|<id>` opens one tab elsewhere. Quote names with spaces ("Chrome 2"). Tab IDs from `tab list` work across browsers.',
+    severalBrowsers: true,
+    noPage: true,
+    whileDialog: true,
+    maxArgs: 2,
+    async run(ctx) {
+      const sub = positional(ctx.args, 0, "list or use");
+      if (sub === "list") ctx.print(ctx.browsers.list());
+      else if (sub === "use") {
+        const label = ctx.browsers.use(positional(ctx.args, 1, "<name|id>"));
+        ctx.note(`new tabs open in ${label}`);
+      } else throw new StepError("browser takes list or use");
     },
   },
   {
@@ -1217,7 +1255,11 @@ COMMANDS.push({
       ctx.print(
         [
           ...availableCommands(ctx.capabilities)
-            .filter((command) => command.listed !== false)
+            .filter(
+              (command) =>
+                command.listed !== false &&
+                (!command.severalBrowsers || ctx.browsers.several()),
+            )
             .map((command) => command.usage),
           "",
           TARGETS_HELP,

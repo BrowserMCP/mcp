@@ -586,6 +586,96 @@ get text #out`,
     );
   });
 
+  await section(
+    "a second Chrome profile: tab list shows both, tab select across them",
+    async () => {
+      const firstTab = await currentTabId(alpha);
+      const second = await launchChromium("profile-2");
+      cleanups.push(() => killPid(second.pid));
+      const secondBrowser = await chromium.connectOverCDP(second.wsEndpoint, {
+        noDefaults: true,
+      });
+      const secondContext = secondBrowser.contexts()[0]!;
+      await inWorker(
+        async (port) => {
+          const { chrome } = globalThis as unknown as { chrome: Chrome };
+          await chrome.storage.local.set({ relayPort: port });
+        },
+        relayPort,
+        secondContext,
+      );
+      // This profile hasn't paired with the daemon: it waits for Allow, without stopping agents in the first
+      const popup = await openPopup({ context: secondContext });
+      await popup.getByText(/^Code: /).waitFor({ timeout: 20_000 });
+      const meanwhile = await call(alpha, "get url");
+      expect(!meanwhile.isError, meanwhile.text);
+      await popup.getByRole("button", { name: "Allow", exact: true }).click();
+      await popup
+        .getByText(/^Connected/)
+        .first()
+        .waitFor();
+      await shot(popup, "popup-second-profile");
+      await popup.close();
+
+      const url = fixtures.url("/second?profile=2");
+      const page = await secondContext.newPage();
+      await page.goto(url);
+      const list = await retryCall(alpha, "tab list", 15_000, (r) =>
+        r.text.includes(url),
+      );
+      log(list.text);
+      // Each tab names its browser
+      const line = (needle: string) =>
+        list.text.split("\n").find((l) => l.includes(needle)) ?? "";
+      const labelOf = (l: string) => /^[ *] \d+ \[([^\]]+)\] /.exec(l)?.[1];
+      const firstLabel = labelOf(
+        list.text.split("\n").find((l) => l.startsWith("*")) ?? "",
+      );
+      const secondLabel = labelOf(line(url));
+      expect(
+        firstLabel && secondLabel && firstLabel !== secondLabel,
+        list.text,
+      );
+      expect(list.text.includes("`browser list`"), list.text);
+      const secondTab = Number(/^[ *] (\d+) /.exec(line(url))?.[1]);
+      expect(secondTab && secondTab !== firstTab, list.text);
+
+      // tab select across the two profiles
+      const there = await call(alpha, `tab select ${secondTab}\nget url`);
+      expect(!there.isError && there.text.includes(url), there.text);
+      // New tabs open in the browser of the current tab
+      const opened = await call(
+        alpha,
+        `tab new ${fixtures.url("/?profile=2")}`,
+      );
+      expect(
+        !opened.isError && opened.text.includes(`in ${secondLabel}`),
+        opened.text,
+      );
+      const back = await call(alpha, `tab select ${firstTab}\nget url`);
+      expect(!back.isError, back.text);
+      const browsers = await call(alpha, "browser list");
+      expect(
+        browsers.text.includes(`"${firstLabel}"`) &&
+          browsers.text.includes(`"${secondLabel}"`),
+        browsers.text,
+      );
+
+      // The second profile closing leaves the first in use, and outputs as with one browser
+      await secondBrowser.close().catch(() => {});
+      killPid(second.pid);
+      const after = await retryCall(
+        alpha,
+        "tab list",
+        15_000,
+        (r) => !r.text.includes(url),
+      );
+      expect(!after.text.includes("["), after.text);
+      const still = await call(alpha, "get url");
+      expect(!still.isError, still.text);
+    },
+  );
+
   await section("a different daemon key asks again", async () => {
     await alpha.close();
     await beta.close();
@@ -782,9 +872,9 @@ async function saveScreenshot(client: Client, name: string) {
 
 // --- The browser ---
 
-/** Launches Playwright's Chromium headless with the extensions, without Playwright's flags that keep background tabs rendering */
-async function launchChromium() {
-  const userDataDir = path.join(tempRoot, "profile");
+/** Launches Playwright's Chromium headless with the extensions, in a profile of its own (a browser process of its own, whose tab IDs start at 1 too), without Playwright's flags that keep background tabs rendering */
+async function launchChromium(profile = "profile") {
+  const userDataDir = path.join(tempRoot, profile);
   const child = spawn(
     chromium.executablePath(),
     [
@@ -825,10 +915,10 @@ async function launchChromium() {
 }
 
 /** The extension's service worker (a new one after a restart) */
-async function extensionWorkers(): Promise<Worker[]> {
+async function extensionWorkers(inContext = context): Promise<Worker[]> {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
-    const workers = context
+    const workers = inContext
       .serviceWorkers()
       .filter((worker) =>
         worker.url().startsWith(`chrome-extension://${extensionId}/`),
@@ -845,9 +935,10 @@ async function extensionWorkers(): Promise<Worker[]> {
 async function inWorker<R, A = undefined>(
   fn: (arg: A) => R | Promise<R>,
   arg?: A,
+  inContext = context,
 ): Promise<R> {
   let lastError: unknown;
-  for (const worker of await extensionWorkers()) {
+  for (const worker of await extensionWorkers(inContext)) {
     try {
       return await worker.evaluate(fn as (arg: unknown) => R, arg);
     } catch (error) {
@@ -890,11 +981,13 @@ async function activateTab(tabId: number) {
 }
 
 /** Opens the popup's page in a tab of its own. With `besideTab`, in a window of its own, then makes that tab's window the focused one, so the popup acts on it */
-async function openPopup(options: { besideTab?: number } = {}): Promise<Page> {
+async function openPopup(
+  options: { besideTab?: number; context?: typeof context } = {},
+): Promise<Page> {
   const url = `chrome-extension://${extensionId}/popup.html`;
   let page: Page;
   if (options.besideTab === undefined) {
-    page = await context.newPage();
+    page = await (options.context ?? context).newPage();
     await page.goto(url);
   } else {
     const opened = context.waitForEvent("page", (p) => p.url().startsWith(url));

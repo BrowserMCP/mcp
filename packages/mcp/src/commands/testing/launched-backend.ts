@@ -16,8 +16,9 @@ import {
 import type {
   AppInfo,
   BackendEvents,
+  BackendTab,
   BrowserBackend,
-  ExposedTab,
+  BrowserSummary,
 } from "@/contracts";
 
 type Tab = {
@@ -193,12 +194,34 @@ export class LaunchedBackend implements BrowserBackend {
     return this.unavailable;
   }
 
-  async findTab(tabId: number): Promise<ExposedTab | undefined> {
+  /** One browser, `b1` */
+  browsers(): BrowserSummary[] {
+    return [
+      {
+        id: "b1",
+        label: "Chrome",
+        connected: true,
+        pairing: "paired",
+        paused: this.paused,
+        tabs: this.tabsById.size,
+        connectedAt: 0,
+        usable: !this.paused,
+        default: true,
+      },
+    ];
+  }
+
+  async findTab(tabId: number): Promise<BackendTab | undefined> {
     return this.tabs().find((tab) => tab.tabId === tabId);
   }
 
-  tabs(): ExposedTab[] {
+  tabClosed(tabId: number): boolean {
+    return this.unavailable === null && !this.tabsById.has(tabId);
+  }
+
+  tabs(): BackendTab[] {
     return [...this.tabsById].map(([tabId, tab]) => ({
+      browser: "b1",
       tabId,
       windowId: 1,
       url: tab.page.url(),

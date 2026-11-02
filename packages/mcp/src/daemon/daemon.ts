@@ -106,7 +106,6 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     daemonVersion: options.version,
     identity,
     log,
-    hasSessions: () => sessions.size > 0,
   });
   const engine = options.createEngine({ backend, log });
   let idleTimer: NodeJS.Timeout | undefined;
