@@ -18,7 +18,7 @@ import {
 } from "@browsermcp/protocol";
 
 import type { BackendEvents } from "@/contracts";
-import type { CdpBridge } from "@/relay/bridge";
+import type { BrowserSlot } from "@/relay/browser-slot";
 import {
   ANOTHER_BROWSER_MESSAGE,
   noSuchTabMessage,
@@ -43,6 +43,11 @@ async function connect(
   });
   extensions.push(extension);
   return extension;
+}
+
+/** The backend's browser slot, whose internals some tests reach into */
+function slot() {
+  return (relay.backend as unknown as { slot: BrowserSlot }).slot;
 }
 
 beforeAll(async () => {
@@ -210,9 +215,7 @@ describe("RelayBackend", () => {
     expect(relay.backend.connected).toBe(true);
     // The second one is the browser now
     const tabId = [...second.tabs.keys()][0]!;
-    await (relay.backend as unknown as { bridge: CdpBridge }).bridge.claim(
-      tabId,
-    );
+    await slot().bridge.claim(tabId);
     expect(second.requests.some((request) => request.method === "attach")).toBe(
       true,
     );
@@ -221,9 +224,7 @@ describe("RelayBackend", () => {
   it("refuses a second browser while an agent uses a tab in the first", async () => {
     const first = await connect();
     const tabId = [...first.tabs.keys()][0]!;
-    await (relay.backend as unknown as { bridge: CdpBridge }).bridge.claim(
-      tabId,
-    );
+    await slot().bridge.claim(tabId);
     const second = await connect();
     expect(await second.closed).toMatchObject({
       code: RelayCloseCode.anotherBrowser,
@@ -346,9 +347,7 @@ describe("RelayBackend", () => {
   it("doesn't adopt a contender that left while the current browser was pinged", async () => {
     const first = await connect();
     const tabId = [...first.tabs.keys()][0]!;
-    await (relay.backend as unknown as { bridge: CdpBridge }).bridge.claim(
-      tabId,
-    );
+    await slot().bridge.claim(tabId);
     first.answering = false;
     const connections: boolean[] = [];
     relay.backend.on("connection", ({ connected }) =>
@@ -372,17 +371,14 @@ describe("RelayBackend", () => {
     await expect(relay.backend.activateTab(tabId)).rejects.toThrow(
       "The browser didn't answer activateTab in time",
     );
-    const connection = (
-      relay.backend as unknown as { extension: { pendingCount: number } }
-    ).extension;
-    expect(connection.pendingCount).toBe(0);
+    expect(slot().connection?.pendingCount).toBe(0);
     extension.answering = true;
   });
 
   it("forgets page waiters that timed out", async () => {
     await relay.close();
     relay = await startTestBackend({ pageTimeoutMs: 100 });
-    const backend = relay.backend as unknown as {
+    const backend = slot() as unknown as {
       waitForPage(targetId: string): Promise<unknown>;
       pageWaiters: Map<string, unknown>;
     };
@@ -402,7 +398,7 @@ describe("RelayBackend", () => {
     const extension = await connect();
     const tabId = await extension.openTab("about:blank");
     // Playwright never gets the Page, as when the target detaches while it's being identified (another extension putting its frame back)
-    const backend = relay.backend as unknown as {
+    const backend = slot() as unknown as {
       identify(page: unknown): Promise<void>;
       pageWaiters: Map<string, unknown>;
     };
