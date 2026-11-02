@@ -36,6 +36,13 @@ import {
   type Token,
   tokenize,
 } from "@/commands/parser";
+import {
+  diffPage,
+  type PageIndex,
+  pageIndex,
+  peekSnapshot,
+  sameIndex,
+} from "@/commands/snapshot";
 import { TabState } from "@/commands/tab-state";
 import type {
   BrowserBackend,
@@ -44,6 +51,16 @@ import type {
   SessionInfo,
 } from "@/contracts";
 import { browserTool } from "@/tools/browser";
+
+/** `prefix` is the document's: a different one means the page navigated, and refs are no longer comparable */
+type Baseline = { tabId: number; index: PageIndex; prefix: string };
+
+/**
+ * After an action, how long the change report waits for the page to react. A page that hasn't changed within about a fast human's reaction time (`minMs`) is taken as unchanged; one that changes is read once it stops changing (two equal reads `pollMs` apart, no request it started still pending), up to `maxMs`. Tests lower them
+ */
+export const settleLimits = { minMs: 300, pollMs: 150, maxMs: 1_000 };
+/** Request types the change report notes (the page's API calls, not its assets) */
+const API_TYPES = new Set(["xhr", "fetch"]);
 
 const DEFAULT_IDLE_RELEASE_MS = 10 * 60_000;
 
@@ -265,6 +282,8 @@ class Engine implements CommandEngine {
     let urlNote: { line: number; note: string; url: string } | null = null;
     /** What's left of the response cap for read output; status lines and the trailer always fit in what's reserved */
     let budget = RESPONSE_CAP - STATUS_RESERVE;
+    /** The tab's interactive elements as of the last step that reports changes, in this call only: a baseline from an earlier call may be stale */
+    let baseline: Baseline | null = null;
     const pushPrinted = (printed: string[]) => {
       if (!printed.length) return;
       const text = printed.join("\n");
@@ -304,7 +323,11 @@ class Engine implements CommandEngine {
           );
         }
         const before = tabId === null ? null : await this.quickInfo(tabId);
+        if (def.reportsChanges && tabId !== null && baseline?.tabId !== tabId) {
+          baseline = await this.interactiveBaseline(tabId);
+        }
         const errorsBefore = state?.errorCount ?? 0;
+        const lastRequest = state?.requests.at(-1)?.id ?? 0;
         const ctx = this.stepContext(session, args, printed, notes, images);
         const dialog = await this.runStep(
           session,
@@ -328,6 +351,30 @@ class Engine implements CommandEngine {
             note: notes.at(-1) ?? "",
             url: after.url,
           };
+        }
+        if (def.reportsChanges && baseline) {
+          const samePage: boolean =
+            !dialog && tabId === baseline.tabId && before?.url === after?.url;
+          const next: Baseline | null = samePage
+            ? await this.settledBaseline(
+                baseline,
+                lastRequest,
+                def.reportsChanges === "always",
+              )
+            : null;
+          // A different document under the same URL (a reload): refs aren't comparable, so nothing is reported
+          if (next && next.prefix === baseline.prefix) {
+            const always = def.reportsChanges === "always";
+            const changes = diffPage(baseline.index, next.index, {
+              changed: always,
+            });
+            if (!changes.length && always) changes.push("(no visible change)");
+            printed.push(...changes.map((line) => `  ${line}`));
+          }
+          if (samePage && tabId !== null) {
+            printed.push(...this.apiCalls(tabId, lastRequest));
+          }
+          baseline = next;
         }
         for (const opened of session.openedTabs.splice(0)) {
           notes.push(await this.openedNote(opened.tabId, opened.url));
@@ -392,6 +439,74 @@ class Engine implements CommandEngine {
       ...images,
     ];
     return { content, ...(failed ? { isError: true } : {}) };
+  }
+
+  /**
+   * Waits for the page to react to an action (`settleLimits`), then reads it. With `floor`, a quiet page is still given `minMs` to react; without it, a page that's quiet when read (no change, no request pending) is returned at once. Null when it can't be read
+   */
+  private async settledBaseline(
+    previous: Baseline,
+    lastRequest: number,
+    floor: boolean,
+  ): Promise<Baseline | null> {
+    const start = Date.now();
+    const pending = () =>
+      (this.states.get(previous.tabId)?.requests ?? []).some(
+        (entry) =>
+          entry.id > lastRequest &&
+          API_TYPES.has(entry.request.resourceType()) &&
+          !entry.response &&
+          !entry.failure,
+      );
+    let last = await this.interactiveBaseline(previous.tabId);
+    while (last && Date.now() - start < settleLimits.maxMs) {
+      const waitedFloor = !floor || Date.now() - start >= settleLimits.minMs;
+      const reacted = !sameIndex(previous.index, last.index);
+      if (!pending() && !reacted && waitedFloor) break;
+      await sleep(settleLimits.pollMs);
+      const next = await this.interactiveBaseline(previous.tabId);
+      if (!next) break;
+      const stable = sameIndex(last.index, next.index);
+      last = next;
+      if (stable && !pending() && (reacted || waitedFloor)) break;
+    }
+    return last;
+  }
+
+  /** The API calls (`xhr`, `fetch`) the step started, as `↔ POST /path 201` lines, at most 5 */
+  private apiCalls(tabId: number, lastRequest: number): string[] {
+    const entries = (this.states.get(tabId)?.requests ?? []).filter(
+      (entry) =>
+        entry.id > lastRequest && API_TYPES.has(entry.request.resourceType()),
+    );
+    const lines = entries.slice(0, 5).map(({ request, response, failure }) => {
+      let path = request.url();
+      try {
+        const url = new URL(path);
+        path = url.pathname + url.search;
+      } catch {
+        // Not a URL Playwright could make: shown as is
+      }
+      const status = response ? response.status() : (failure ?? "pending");
+      return `  ↔ ${request.method()} ${truncate(path, 100)} ${status}`;
+    });
+    if (entries.length > 5)
+      lines.push(`  … ${entries.length - 5} more requests: run \`requests\``);
+    return lines;
+  }
+
+  /** The tab's interactive elements now, or null when they can't be read quickly (the report of changes is a courtesy, never an error) */
+  private async interactiveBaseline(
+    tabId: number | null,
+  ): Promise<Baseline | null> {
+    const page = tabId === null ? undefined : this.states.get(tabId)?.page;
+    if (tabId === null || !page) return null;
+    try {
+      const { nodes, prefix } = await peekSnapshot(page);
+      return { tabId, index: pageIndex(nodes), prefix };
+    } catch {
+      return null;
+    }
   }
 
   /**
