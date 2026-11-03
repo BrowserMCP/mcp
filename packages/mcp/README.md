@@ -6,7 +6,7 @@ The MCP server AI apps run (`npx @browsermcp/mcp@latest`). It drives the user's 
 
 Browser MCP lets AI apps such as Claude Code, Cursor and VS Code use your browser, logged in where you are, in tabs of their own. You need Chrome (or Edge or Brave) and Node.js 20 or later.
 
-1. Install the [Browser MCP extension](https://browsermcp.io/install) and pin it to the toolbar.
+1. Install the [Browser MCP extension](https://chromewebstore.google.com/detail/bjfgambnhccakkhmkepdoekmckoijdlc) and pin it to the toolbar.
 2. Add the server to your AI app, and restart the app. In Claude Code: `claude mcp add --scope user browsermcp -- npx @browsermcp/mcp@latest`. Most other apps, such as Cursor and Claude Desktop, take this (VS Code's format differs; see the docs below):
 
    ```json
