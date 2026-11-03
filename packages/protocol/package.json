@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/node": "^24.19.1",
+    "@types/node": "^24.19.2",
     "devtools-protocol": "^0.0.1525085",
     "typescript": "^7.0.2"
   }

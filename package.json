@@ -13,8 +13,8 @@
     "format:fix": "oxfmt"
   },
   "devDependencies": {
-    "oxfmt": "^0.72.0",
-    "oxlint": "^1.87.0"
+    "oxfmt": "^0.75.0",
+    "oxlint": "^1.90.0"
   },
   "engines": {
     "node": ">=24.0.0"

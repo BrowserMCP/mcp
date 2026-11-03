@@ -32,16 +32,16 @@
     "commander": "^14.0.1",
     "playwright-core": "1.64.1",
     "ws": "^8.18.3",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
     "@browsermcp/protocol": "workspace:*",
-    "@types/node": "^24.19.1",
+    "@types/node": "^24.19.2",
     "@types/ws": "^8.18.1",
     "shx": "^0.4.0",
     "tsup": "^8.5.0",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.5"
   }
 }
