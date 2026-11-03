@@ -38,6 +38,8 @@ export class LaunchedBackend implements BrowserBackend {
   paused = false;
   /** What `unavailableReason()` returns; tests set it */
   unavailable: string | null = null;
+  /** How late `tabOpened` comes, as the extension's does when it first moves a popup into a window and groups the tab; tests set it */
+  tabOpenedDelayMs = 0;
   readonly claimed = new Set<number>();
   readonly activity: string[] = [];
   private tabsById = new Map<number, Tab>();
@@ -59,6 +61,11 @@ export class LaunchedBackend implements BrowserBackend {
       const opener = [...this.tabsById].find(
         ([, tab]) => tab.page === openerPage,
       )?.[0];
+      if (this.tabOpenedDelayMs) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, this.tabOpenedDelayMs),
+        );
+      }
       this.emit("tabOpened", {
         tabId,
         openerTabId: opener ?? -1,

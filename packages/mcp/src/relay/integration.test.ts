@@ -35,6 +35,7 @@ beforeAll(async () => {
       <p id="out"></p>
       <img src="/missing.png">`,
     "/frame": `<title>Frame</title><button onclick="this.textContent = 'clicked'">Inside</button>`,
+    "/late": `<title>Late</title><script>setTimeout(() => document.body.insertAdjacentHTML("beforeend", '<p id="late">here at last</p>'), 1500)</script>`,
   });
   fixtures.url("/");
 }, 60_000);
@@ -232,6 +233,41 @@ describe("the engine through the relay", () => {
     await vi.waitUntil(() => !relay.backend.connected);
     extension = await FakeExtension.connect({ port: relay.port, chromium });
     expect(await run("get url")).toContain(fixtures.url("/"));
+    (engine as unknown as { dispose(): void }).dispose();
+  });
+
+  it("reads again on the new Page when the tab re-attaches during a read", async () => {
+    const engine = createCommandEngine({ backend: relay.backend });
+    engine.openSession({
+      id: "s1",
+      app: { id: "claude-code", name: "Claude Code" },
+      capabilities: [],
+      io: {
+        readFile: () => Promise.reject(new Error("no files")),
+        writeFile: () => Promise.reject(new Error("no files")),
+      },
+    });
+    const run = async (commands: string) => {
+      const result = await engine.callTool("s1", "browser", { commands });
+      return result.content
+        .map((c) => (c.type === "text" ? c.text : ""))
+        .join("");
+    };
+    const tabId = await extension.openTab(fixtures.url("/late"));
+    expect(await run(`tab select ${tabId}\nget title`)).toContain("Late");
+    const first = await relay.backend.page(tabId);
+    // While `get text` waits for the element, the debugger detaches (as when another extension's frame appears) and the bridge re-attaches
+    const reading = run("get text #late");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await chromium.send("Target.detachFromTarget", {
+      sessionId: extension.tabs.get(tabId)!.sessionId,
+    });
+    await vi.waitUntil(() => first.isClosed());
+    const text = await reading;
+    expect(text).toContain("here at last");
+    expect(text).not.toContain("✗");
+    // The tab stayed claimed throughout
+    expect(released).toEqual([]);
     (engine as unknown as { dispose(): void }).dispose();
   });
 });

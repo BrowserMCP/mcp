@@ -21,6 +21,7 @@ import { hiddenTabs } from "@/commands/hidden-tabs";
 import { INSTRUCTIONS } from "@/commands/instructions";
 import {
   errorMessage,
+  isPageClosedError,
   MAX_IMAGES,
   RESPONSE_CAP,
   sleep,
@@ -58,6 +59,8 @@ const NO_TAB_MESSAGE =
 
 /** How long a step may run before it's abandoned and its tab freed: `--timeout` (or the command's own time) plus headroom, and at least `defaultMs`. Tests lower them */
 export const stepLimits = { defaultMs: 30_000, headroomMs: 5_000 };
+/** How long a step waits for the extension to report the tabs its page opened. Tests change it */
+export const openedTabWait = { ms: 5_000 };
 /** Room kept in the response for status lines, the trailer and notices */
 const STATUS_RESERVE = 2_000;
 /** Echoed command lines are cut to this */
@@ -106,6 +109,8 @@ class Engine implements CommandEngine {
     });
     backend.on("state", () => this.pruneClosedTabs());
     backend.on("tabOpened", ({ tabId, openerTabId, url }) => {
+      const opener = this.states.get(openerTabId);
+      if (opener) opener.reportedOpens++;
       const owner =
         [...this.sessions.values()].find((s) => s.current === openerTabId) ??
         [...this.sessions.values()].find((s) => s.tabs.has(openerTabId));
@@ -315,12 +320,22 @@ class Engine implements CommandEngine {
         }
         const before = tabId === null ? null : await this.quickInfo(tabId);
         const errorsBefore = state?.errorCount ?? 0;
+        // Windows each tab opened that weren't reported before this step, so the step waits only for its own
+        const unreportedBefore = new Map(
+          [...this.states.values()].map((s) => [s, s.unreportedOpens]),
+        );
         const ctx = this.stepContext(session, args, printed, notes, images);
         const dialog = await this.runStep(
           session,
           tabId,
           ctx,
-          def.run,
+          def.reads
+            ? (c) =>
+                this.readAgainIfReattached(session, c, def, () => {
+                  printed.length = 0;
+                  notes.length = 0;
+                })
+            : def.run,
           stepTimeout(def, args),
         );
         tabId = this.currentTab(session);
@@ -339,10 +354,16 @@ class Engine implements CommandEngine {
             url: after.url,
           };
         }
+        const afterState = tabId === null ? undefined : this.states.get(tabId);
+        if (afterState) {
+          await this.waitForOpenedTabs(
+            afterState,
+            unreportedBefore.get(afterState) ?? 0,
+          );
+        }
         for (const opened of session.openedTabs.splice(0)) {
           notes.push(await this.openedNote(opened.tabId, opened.url));
         }
-        const afterState = tabId === null ? undefined : this.states.get(tabId);
         state ??= afterState;
         if (afterState && afterState.page === state?.page) {
           const fresh = afterState.errorCount - errorsBefore;
@@ -693,7 +714,7 @@ class Engine implements CommandEngine {
       this.states.set(tabId, state);
       try {
         state.internalCdp = await this.backend.cdpSession(tabId);
-        await state.watchDialogClose(state.internalCdp);
+        await state.watchCdp(state.internalCdp);
       } catch (error) {
         this.log("no internal CDP session", tabId, error);
       }
@@ -800,6 +821,42 @@ class Engine implements CommandEngine {
     }
     const tab = this.backend.tabs().find((t) => t.tabId === tabId);
     return tab ? { tabId, url: tab.url, title: tab.title } : null;
+  }
+
+  /**
+   * Runs a step that only reads the page, once more if its Page went away while the tab stayed claimed: the debugger detached and the bridge re-attaches it as a new Page (a navigation that swapped the renderer, another extension's frame), so the tab is fine. A step that acts isn't repeated, since it may have acted already
+   */
+  private async readAgainIfReattached(
+    session: Session,
+    ctx: StepContext,
+    def: CommandDef,
+    clearOutput: () => void,
+  ) {
+    try {
+      await def.run(ctx);
+    } catch (error) {
+      const tabId = this.currentTab(session);
+      if (
+        !isPageClosedError(error) ||
+        tabId === null ||
+        !this.backend.isClaimed(tabId)
+      ) {
+        throw error;
+      }
+      this.log("reading again after a re-attach", def.name, tabId);
+      clearOutput();
+      await def.run(ctx);
+    }
+  }
+
+  /**
+   * After a step whose page opened windows, waits (a while at most) for the extension's `tabOpened` reports, which come a moment later (it may first move a popup into a normal window and group the tab), so the step's line names the tabs it opened. A window the extension doesn't report (a URL agents may not use) only costs the wait
+   */
+  private async waitForOpenedTabs(state: TabState, unreportedBefore: number) {
+    const deadline = Date.now() + openedTabWait.ms;
+    while (state.unreportedOpens > unreportedBefore && Date.now() < deadline) {
+      await sleep(25);
+    }
   }
 
   /** `opened tab 4 "Checkout"`, waiting briefly for the new tab's title */

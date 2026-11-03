@@ -236,6 +236,8 @@ export class FakeExtension {
   private inputQueues = new Map<number, Promise<unknown>>();
   private stateTimer: NodeJS.Timeout | undefined;
   private stateDelayMs = 10;
+  /** While held, tab changes aren't reported (`holdState()`) */
+  private stateHeld = false;
   private tabWaiters = new Map<string, (tab: FakeTab) => void>();
   private offChromium: () => void;
   private ws!: WebSocket;
@@ -760,8 +762,23 @@ export class FakeExtension {
     }
   }
 
+  /** Stops reporting tab changes until `releaseState()`, as when the extension's `state` comes late */
+  holdState() {
+    this.stateHeld = true;
+  }
+
+  releaseState() {
+    this.stateHeld = false;
+    this.sendState();
+  }
+
   private sendState() {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.welcome) {
+    if (
+      !this.ws ||
+      this.ws.readyState !== WebSocket.OPEN ||
+      !this.welcome ||
+      this.stateHeld
+    ) {
       return;
     }
     clearTimeout(this.stateTimer);

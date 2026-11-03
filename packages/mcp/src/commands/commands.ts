@@ -6,6 +6,7 @@ import type { CDPSession, Page } from "playwright-core";
 import {
   click,
   drag,
+  ACTION_TIMEOUT_MS,
   FIND_TIMEOUT_MS,
   hover,
   moveCursor,
@@ -91,6 +92,8 @@ export type CommandDef = {
   flags?: FlagSpec;
   /** Navigates by design, so the engine doesn't note the URL change */
   navigates?: boolean;
+  /** Only reads the page, so the engine runs it again when the tab re-attached (a new Page) while it ran */
+  reads?: boolean;
   /** Doesn't need a page (tab commands, help, wait <ms>) */
   noPage?: boolean;
   /** Runs while a dialog is open, which blocks the page (tab commands, help, `wait <ms>`, `dialog`) */
@@ -185,7 +188,7 @@ async function setChecked(ctx: StepContext, checked: boolean) {
   const locator = await resolveOne(page, t);
   let current: boolean;
   try {
-    current = await locator.isChecked({ timeout: FIND_TIMEOUT_MS });
+    current = await locator.isChecked({ timeout: ACTION_TIMEOUT_MS });
   } catch {
     throw new StepError(`${t.source} isn't a checkbox, radio or switch`);
   }
@@ -231,7 +234,7 @@ async function evaluate(page: Page, src: string, element?: Target) {
       (window as unknown as Record<string, Element>)[key] = el;
     },
     key,
-    { timeout: FIND_TIMEOUT_MS },
+    { timeout: ACTION_TIMEOUT_MS },
   );
   return page.evaluate(
     call(
@@ -543,7 +546,7 @@ export const COMMANDS: CommandDef[] = [
         await locator.evaluate(
           (el) => el.scrollIntoView({ block: "center", behavior: "instant" }),
           undefined,
-          { timeout: FIND_TIMEOUT_MS },
+          { timeout: ACTION_TIMEOUT_MS },
         );
         return;
       }
@@ -622,7 +625,7 @@ export const COMMANDS: CommandDef[] = [
           };
         },
         [direction, px, typeof inFlag !== "string"] as const,
-        { timeout: FIND_TIMEOUT_MS },
+        { timeout: ACTION_TIMEOUT_MS },
       );
       const what = inner ? "the scroll area" : "the page";
       if (max <= 0) ctx.note(`${what} doesn't scroll`);
@@ -653,7 +656,7 @@ export const COMMANDS: CommandDef[] = [
       const box = await locator.boundingBox().catch(() => null);
       if (box)
         await moveCursor(page, box.x + box.width / 2, box.y + box.height / 2);
-      await locator.fill(text, { force: true, timeout: FIND_TIMEOUT_MS });
+      await locator.fill(text, { force: true, timeout: ACTION_TIMEOUT_MS });
       await fillLike(ctx, page, !!ctx.args.flags.submit);
     },
   },
@@ -710,7 +713,7 @@ export const COMMANDS: CommandDef[] = [
       await settled(ctx, page, async () => {
         const selected = await locator.selectOption(values, {
           force: true,
-          timeout: FIND_TIMEOUT_MS,
+          timeout: ACTION_TIMEOUT_MS,
         });
         if (!selected.length)
           throw new StepError(`No option of ${t.source} matches`);
@@ -755,10 +758,10 @@ export const COMMANDS: CommandDef[] = [
       const isFileInput = await locator.evaluate(
         (el) => el instanceof HTMLInputElement && el.type === "file",
         undefined,
-        { timeout: FIND_TIMEOUT_MS },
+        { timeout: ACTION_TIMEOUT_MS },
       );
       if (isFileInput) {
-        await locator.setInputFiles(files, { timeout: FIND_TIMEOUT_MS });
+        await locator.setInputFiles(files, { timeout: ACTION_TIMEOUT_MS });
         return;
       }
       const chooser = page.waitForEvent("filechooser", {
@@ -939,6 +942,7 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: "snapshot",
+    reads: true,
     usage:
       "snapshot [<target>] [-i] [--depth N] [--max N|all]   # -i: interactive elements, headings, landmarks",
     help: "Prints the accessibility tree with refs (e12, f1e3 in iframes) to use as targets. -i keeps interactive elements, landmarks, headings and cells. A target or --depth narrows it; refs stay valid either way.",
@@ -948,6 +952,7 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: "find",
+    reads: true,
     usage: 'find "<text>" [--max N|all]   # snapshot lines containing the text',
     help: "Prints the snapshot lines whose name, text or URL contain the text (ignoring case), each with its ancestors, so you can act on a ref without a full snapshot.",
     flags: { max: true },
@@ -969,6 +974,7 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: "get",
+    reads: true,
     usage:
       "get text|value|count [<target>] [--max N|all] | get attr <name> <target> | get url | get title",
     help: "text: the target's visible text (the page's without a target). value: a field's value. count: how many elements match. attr: an attribute.",
@@ -993,14 +999,14 @@ export const COMMANDS: CommandDef[] = [
         const name = positional(ctx.args, 1, "<name>");
         const locator = await resolveOne(page, target(ctx.args, 2));
         const value = await locator.getAttribute(name, {
-          timeout: FIND_TIMEOUT_MS,
+          timeout: ACTION_TIMEOUT_MS,
         });
         return ctx.print(value ?? "(none)");
       }
       if (what === "value") {
         const locator = await resolveOne(page, target(ctx.args, 1));
         return ctx.print(
-          cap(await locator.inputValue({ timeout: FIND_TIMEOUT_MS }), max),
+          cap(await locator.inputValue({ timeout: ACTION_TIMEOUT_MS }), max),
         );
       }
       if (what === "text") {
@@ -1008,7 +1014,7 @@ export const COMMANDS: CommandDef[] = [
           ? parseTarget(ctx.args.positional[1].text)
           : undefined;
         const locator = t ? await resolveOne(page, t) : page.locator("body");
-        const text = (await locator.innerText({ timeout: FIND_TIMEOUT_MS }))
+        const text = (await locator.innerText({ timeout: ACTION_TIMEOUT_MS }))
           .replace(/\n{3,}/g, "\n\n")
           .trim();
         return ctx.print(
@@ -1020,6 +1026,7 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: "screenshot",
+    reads: true,
     usage:
       "screenshot [<target>] [--full] [--path <file>]   # JPEG, longest side ≤ 1568 px",
     help: "Adds a JPEG of the viewport (or the element, or the full page) to the result, longest side ≤ 1568 px. --path also saves it, overwriting an existing file (paths: absolute, under ~, or relative to your MCP root or working directory).",

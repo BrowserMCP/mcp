@@ -1,7 +1,7 @@
 /**
  * End-to-end smoke test of browser control. Run it with `pnpm --filter @browsermcp/extension smoke`, which first builds this extension in development mode and `@browsermcp/mcp`. `--extension <dir>` runs it against another development build of an extension with browser control (`@browsermcp/extension-core`) and the same popup text, such as the Chrome Web Store build's: development builds set `legacyPortOverride`, which the section on 0.1.x servers needs.
  *
- * It loads the dev build (`.output/chrome-mv3-dev`, or `--extension`) in headless Chromium, launched without Playwright's anti-throttling flags so background tabs are hidden as in the user's Chrome, and runs the built MCP server (`@browsermcp/mcp`'s `dist/index.js --port <random>`) over stdio with the MCP SDK's client, as AI apps do. The server starts its daemon, the extension finds it on `relayPort`, and the test clicks **Allow** in the real popup. Each section asserts what a scenario of the design needs, and screenshots go to `smoke/` beside the build (`.output/smoke/`).
+ * It loads the dev build (`.output/chrome-mv3-dev`, or `--extension`) in headless Chromium, launched without Playwright's anti-throttling flags so background tabs are hidden as in the user's Chrome, and runs the built MCP server (`@browsermcp/mcp`'s `dist/index.js --port <random>`) over stdio with the MCP SDK's client, as AI apps do. The server starts its daemon, the extension finds it on `relayPort`, and the test clicks **Allow** in the real popup. Each section asserts what a scenario of the design needs, and screenshots and the daemons' logs go to `smoke/` beside the build (`.output/smoke/`), or `--out <dir>`. A failed section reports the step or check it failed at, the error and the last call's output, and screenshots the open pages.
  *
  * It never touches the user's Browser MCP: the daemons get a temp `BROWSER_MCP_HOME` and random ports, the extension's legacy probe a random port (`legacyPort`, honored only by development and test builds), and the browser reaches loopback only through a proxy that refuses ports 9009–9012, so even the extension's first probes (before `relayPort` is set) can't reach a real server. It kills only the browser and daemons it started, by PID.
  *
@@ -14,6 +14,7 @@ import { chromium, type Page, type Worker } from "@playwright/test";
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -38,7 +39,7 @@ import {
 type Chrome = typeof import("wxt/browser").browser;
 
 const { values: args } = parseArgs({
-  options: { extension: { type: "string" } },
+  options: { extension: { type: "string" }, out: { type: "string" } },
 });
 const extensionDir = args.extension
   ? path.resolve(args.extension)
@@ -47,7 +48,9 @@ const serverEntry = path.resolve(
   import.meta.dirname,
   "../../../packages/mcp/dist/index.js",
 );
-const outDir = path.resolve(extensionDir, "../smoke");
+const outDir = args.out
+  ? path.resolve(args.out)
+  : path.resolve(extensionDir, "../smoke");
 const PAUSED_MESSAGE =
   "The user paused Browser MCP. Ask them to click Resume in its popup";
 /** Ports the browser must never reach: 0.1.x servers' and the real daemon's */
@@ -96,6 +99,12 @@ const clients: Client[] = [];
 cleanups.push(() => Promise.all(clients.map((c) => c.close().catch(() => {}))));
 
 const results: { name: string; ok: boolean; error?: string; ms: number }[] = [];
+/** What the running section is doing, for its failure report */
+const progress: {
+  step: string;
+  call: { commands: string; text?: string } | null;
+} = { step: "", call: null };
+class CheckFailed extends Error {}
 
 try {
   // Old versions: a 0.1.x server (a fake one speaking its WebSocket protocol, on a random port rather than 9009) gets `LEGACY_SERVER_MESSAGE` for every command
@@ -186,12 +195,13 @@ click getByRole('button', { name: 'Submit order' })
 get text body --max 1500`,
     );
     log(result.text);
+    // Before the checks, so the sections after this one have the tab even when it fails (untracked, so a failure reports the form call)
+    alphaTab = await currentTabId(alpha, false).catch(() => 0);
     expect(!result.isError, result.text);
     expect(result.text.includes("Thanks, order received"), result.text);
     expect(result.text.includes('"custname":"Jane Doe"'), result.text);
     expect(result.text.includes('"topping":["bacon","mushroom"]'), result.text);
     expect(result.text.length < 600, `${result.text.length} characters`);
-    alphaTab = await currentTabId(alpha);
   });
 
   await section(
@@ -207,7 +217,8 @@ get text body --max 1500`,
       const group = info.groups.find((g) => g.id === info.tab.groupId);
       expect(group?.title === "Smoke Alpha", `group ${JSON.stringify(group)}`);
       expect(!!group?.color, "the group has a color");
-      expect((await badge()) === "1", `badge ${await badge()}`);
+      // The extension updates the badge a moment after the agent's tab changes
+      await waitFor("a badge of 1", async () => (await badge()) === "1");
       // Hidden-tab spike: focus emulation makes the background tab render, so clicks and lazy loading work there
       const result = await call(
         alpha,
@@ -490,18 +501,25 @@ get text #out`,
       );
     const [target] = await workerTargets();
     expect(target, "the service worker's target");
+    // An event can start a new worker within milliseconds, under the same target ID, so the new one is told apart by a global the old one had
+    type Marked = { __smokeOldWorker?: boolean };
+    await inWorker(() => {
+      (globalThis as Marked).__smokeOldWorker = true;
+    });
+    const restarted = async () =>
+      (await workerTargets()).length > 0 &&
+      (await inWorker(() => !(globalThis as Marked).__smokeOldWorker));
     await session.send("Target.closeTarget", { targetId: target.targetId });
     await waitFor(
-      "the service worker to stop",
-      async () => (await workerTargets()).length === 0,
+      "the service worker to stop or restart",
+      async () => (await workerTargets()).length === 0 || (await restarted()),
     );
-    // An event wakes it, as one would in the user's browser (here a new tab)
-    const waker = await context.newPage();
-    await waker.close();
-    await waitFor(
-      "the service worker to start",
-      async () => (await workerTargets()).length === 1,
-    );
+    if (!(await restarted().catch(() => false))) {
+      // An event wakes it, as one would in the user's browser (here a new tab)
+      const waker = await context.newPage();
+      await waker.close();
+    }
+    await waitFor("a new service worker", restarted);
     await session.detach();
     const result = await retryCall(alpha, "get url", 20_000);
     expect(!result.isError && result.text.includes("/upload"), result.text);
@@ -538,7 +556,7 @@ get text #out`,
         JSON.stringify(groups),
       );
       expect(groups[0]!.color !== groups[1]!.color, JSON.stringify(groups));
-      expect((await badge()) === "2", `badge ${await badge()}`);
+      await waitFor("a badge of 2", async () => (await badge()) === "2");
     },
   );
 
@@ -575,7 +593,7 @@ get text #out`,
       "Stop to detach every tab",
       async () => (await popup.getByText("In use").count()) === 0,
     );
-    expect((await badge()) === "", `badge ${await badge()}`);
+    await waitFor("no badge", async () => (await badge()) === "");
     await popup.getByRole("button", { name: "Resume" }).click();
     await popup.getByRole("button", { name: "Stop" }).waitFor();
     await popup.close();
@@ -591,88 +609,102 @@ get text #out`,
     async () => {
       const firstTab = await currentTabId(alpha);
       const second = await launchChromium("profile-2");
-      cleanups.push(() => killPid(second.pid));
+      // Killed once, so a later kill can't hit a process that reused its PID
+      let closed = false;
+      cleanups.push(() => {
+        if (!closed) killPid(second.pid);
+      });
       const secondBrowser = await chromium.connectOverCDP(second.wsEndpoint, {
         noDefaults: true,
       });
+      const closeSecond = async () => {
+        if (closed) return;
+        closed = true;
+        await secondBrowser.close().catch(() => {});
+        killPid(second.pid);
+      };
       const secondContext = secondBrowser.contexts()[0]!;
-      await inWorker(
-        async (port) => {
-          const { chrome } = globalThis as unknown as { chrome: Chrome };
-          await chrome.storage.local.set({ relayPort: port });
-        },
-        relayPort,
-        secondContext,
-      );
-      // This profile hasn't paired with the daemon: it waits for Allow, without stopping agents in the first
-      const popup = await openPopup({ context: secondContext });
-      await popup.getByText(/^Code: /).waitFor({ timeout: 20_000 });
-      const meanwhile = await call(alpha, "get url");
-      expect(!meanwhile.isError, meanwhile.text);
-      await popup.getByRole("button", { name: "Allow", exact: true }).click();
-      await popup
-        .getByText(/^Connected/)
-        .first()
-        .waitFor();
-      await shot(popup, "popup-second-profile");
-      await popup.close();
+      // Closed even when a check fails, so the sections after this one have one browser
+      try {
+        await inWorker(
+          async (port) => {
+            const { chrome } = globalThis as unknown as { chrome: Chrome };
+            await chrome.storage.local.set({ relayPort: port });
+          },
+          relayPort,
+          secondContext,
+        );
+        // This profile hasn't paired with the daemon: it waits for Allow, without stopping agents in the first
+        const popup = await openPopup({ context: secondContext });
+        await popup.getByText(/^Code: /).waitFor({ timeout: 20_000 });
+        const meanwhile = await call(alpha, "get url");
+        expect(!meanwhile.isError, meanwhile.text);
+        await popup.getByRole("button", { name: "Allow", exact: true }).click();
+        await popup
+          .getByText(/^Connected/)
+          .first()
+          .waitFor();
+        await shot(popup, "popup-second-profile");
+        await popup.close();
 
-      const url = fixtures.url("/second?profile=2");
-      const page = await secondContext.newPage();
-      await page.goto(url);
-      const list = await retryCall(alpha, "tab list", 15_000, (r) =>
-        r.text.includes(url),
-      );
-      log(list.text);
-      // Each tab names its browser
-      const line = (needle: string) =>
-        list.text.split("\n").find((l) => l.includes(needle)) ?? "";
-      const labelOf = (l: string) => /^[ *] \d+ \[([^\]]+)\] /.exec(l)?.[1];
-      const firstLabel = labelOf(
-        list.text.split("\n").find((l) => l.startsWith("*")) ?? "",
-      );
-      const secondLabel = labelOf(line(url));
-      expect(
-        firstLabel && secondLabel && firstLabel !== secondLabel,
-        list.text,
-      );
-      expect(list.text.includes("`browser list`"), list.text);
-      const secondTab = Number(/^[ *] (\d+) /.exec(line(url))?.[1]);
-      expect(secondTab && secondTab !== firstTab, list.text);
+        const url = fixtures.url("/second?profile=2");
+        const page = await secondContext.newPage();
+        await page.goto(url);
+        const list = await retryCall(alpha, "tab list", 15_000, (r) =>
+          r.text.includes(url),
+        );
+        log(list.text);
+        // Each tab names its browser
+        const line = (needle: string) =>
+          list.text.split("\n").find((l) => l.includes(needle)) ?? "";
+        const labelOf = (l: string) => /^[ *] \d+ \[([^\]]+)\] /.exec(l)?.[1];
+        const firstLabel = labelOf(
+          list.text.split("\n").find((l) => l.startsWith("*")) ?? "",
+        );
+        const secondLabel = labelOf(line(url));
+        expect(
+          firstLabel && secondLabel && firstLabel !== secondLabel,
+          list.text,
+        );
+        expect(list.text.includes("`browser list`"), list.text);
+        const secondTab = Number(/^[ *] (\d+) /.exec(line(url))?.[1]);
+        expect(secondTab && secondTab !== firstTab, list.text);
 
-      // tab select across the two profiles
-      const there = await call(alpha, `tab select ${secondTab}\nget url`);
-      expect(!there.isError && there.text.includes(url), there.text);
-      // New tabs open in the browser of the current tab
-      const opened = await call(
-        alpha,
-        `tab new ${fixtures.url("/?profile=2")}`,
-      );
-      expect(
-        !opened.isError && opened.text.includes(`in ${secondLabel}`),
-        opened.text,
-      );
-      const back = await call(alpha, `tab select ${firstTab}\nget url`);
-      expect(!back.isError, back.text);
-      const browsers = await call(alpha, "browser list");
-      expect(
-        browsers.text.includes(`"${firstLabel}"`) &&
-          browsers.text.includes(`"${secondLabel}"`),
-        browsers.text,
-      );
+        // tab select across the two profiles
+        const there = await call(alpha, `tab select ${secondTab}\nget url`);
+        expect(!there.isError && there.text.includes(url), there.text);
+        // New tabs open in the browser of the current tab
+        const opened = await call(
+          alpha,
+          `tab new ${fixtures.url("/?profile=2")}`,
+        );
+        expect(
+          !opened.isError && opened.text.includes(`in ${secondLabel}`),
+          opened.text,
+        );
+        const back = await call(alpha, `tab select ${firstTab}\nget url`);
+        expect(!back.isError, back.text);
+        const browsers = await call(alpha, "browser list");
+        expect(
+          browsers.text.includes(`"${firstLabel}"`) &&
+            browsers.text.includes(`"${secondLabel}"`),
+          browsers.text,
+        );
 
-      // The second profile closing leaves the first in use, and outputs as with one browser
-      await secondBrowser.close().catch(() => {});
-      killPid(second.pid);
-      const after = await retryCall(
-        alpha,
-        "tab list",
-        15_000,
-        (r) => !r.text.includes(url),
-      );
-      expect(!after.text.includes("["), after.text);
-      const still = await call(alpha, "get url");
-      expect(!still.isError, still.text);
+        // The second profile closing leaves the first in use, and outputs as with one browser
+        await closeSecond();
+        const after = await retryCall(
+          alpha,
+          "tab list",
+          15_000,
+          (r) => !r.text.includes(url),
+        );
+        expect(!after.text.includes("["), after.text);
+        const still = await call(alpha, "get url");
+        expect(!still.isError, still.text);
+      } finally {
+        await closeSecond();
+      }
     },
   );
 
@@ -705,6 +737,18 @@ get text #out`,
       .then(cleanup)
       .catch((error: unknown) => log("cleanup:", error));
   }
+  // The daemons' logs go beside the screenshots
+  for (const dir of daemonHomes) {
+    for (const suffix of ["", ".1"]) {
+      const file = path.join(dir, `daemon-${relayPort}.log${suffix}`);
+      if (existsSync(file)) {
+        copyFileSync(
+          file,
+          path.join(outDir, `${path.basename(dir)}-daemon.log${suffix}`),
+        );
+      }
+    }
+  }
   // The browser and daemon may still be writing their last files as they exit
   rmSync(tempRoot, {
     recursive: true,
@@ -728,20 +772,64 @@ process.exit(failed.length ? 1 : 0);
 
 async function section(name: string, run: () => Promise<void>) {
   const start = Date.now();
+  Object.assign(progress, { step: "starting", call: null });
   try {
     await withTimeout(run(), 120_000, name);
     results.push({ name, ok: true, ms: Date.now() - start });
     log(`✓ ${name}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    results.push({ name, ok: false, error: message, ms: Date.now() - start });
-    log(`✗ ${name}\n${message}`);
+    const report = [
+      `✗ ${name}`,
+      `  failed at: ${failedCheck(error) ?? progress.step}`,
+      `  error: ${message}`,
+    ];
+    if (progress.call) {
+      report.push(
+        `  last call: ${JSON.stringify(progress.call.commands)}`,
+        `  its output: ${progress.call.text === undefined ? "(still running)" : JSON.stringify(progress.call.text)}`,
+      );
+    }
+    const index = results.length;
+    results.push({
+      name,
+      ok: false,
+      error: report.slice(1).join("\n"),
+      ms: Date.now() - start,
+    });
+    report.push(`  screenshots: ${await failureShots(index)}`);
+    log(report.join("\n"));
   }
+}
+
+/** For a failed `expect`, its line in this file */
+function failedCheck(error: unknown) {
+  if (!(error instanceof CheckFailed)) return null;
+  const file = path.basename(import.meta.filename);
+  const frame = error.stack
+    ?.split("\n")
+    .slice(1)
+    .find((line) => line.includes(file) && !/\bat expect\b/.test(line));
+  const where = frame?.trim().replace(/^at (.*\()?|\)$/g, "");
+  return `the check at ${where ?? "?"}`;
+}
+
+/** Screenshots every open page after a section fails (a background tab may draw nothing, so each gets a few seconds) */
+async function failureShots(index: number) {
+  const names: string[] = [];
+  for (const [i, page] of context.pages().entries()) {
+    const file = `failed-${index + 1}-page-${i + 1}.png`;
+    try {
+      await page.screenshot({ path: path.join(outDir, file), timeout: 5_000 });
+      names.push(`${file} (${page.url()})`);
+    } catch {}
+  }
+  return names.join(", ") || "none";
 }
 
 function expect(condition: unknown, message: string): asserts condition {
   if (!condition) {
-    throw new Error(message);
+    throw new CheckFailed(message);
   }
 }
 
@@ -750,6 +838,7 @@ async function waitFor(
   check: () => Promise<boolean>,
   timeoutMs = 15_000,
 ) {
+  progress.step = `waiting for ${what}`;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await check().catch(() => false)) {
@@ -815,7 +904,17 @@ type CallResult = {
   isError: boolean;
 };
 
-async function call(client: Client, commands: string): Promise<CallResult> {
+/** Runs a call. Untracked, it stays out of the section's failure report */
+async function call(
+  client: Client,
+  commands: string,
+  tracked = true,
+): Promise<CallResult> {
+  const record: { commands: string; text?: string } = { commands };
+  if (tracked) {
+    progress.step = `the call ${JSON.stringify(commands)}`;
+    progress.call = record;
+  }
   const result = await client.callTool(
     { name: "browser", arguments: { commands } },
     undefined,
@@ -826,11 +925,14 @@ async function call(client: Client, commands: string): Promise<CallResult> {
     text?: string;
     data?: string;
   }[];
+  const text = content
+    .filter((c) => c.type === "text")
+    .map((c) => c.text)
+    .join("\n");
+  record.text = text;
+  if (tracked) progress.step = `after the call ${JSON.stringify(commands)}`;
   return {
-    text: content
-      .filter((c) => c.type === "text")
-      .map((c) => c.text)
-      .join("\n"),
+    text,
     images: content.filter((c) => c.type === "image") as { data: string }[],
     isError: !!result.isError,
   };
@@ -853,8 +955,8 @@ async function retryCall(
   }
 }
 
-async function currentTabId(client: Client) {
-  const list = await call(client, "tab list");
+async function currentTabId(client: Client, tracked = true) {
+  const list = await call(client, "tab list", tracked);
   const id = Number(/^\* (\d+)/m.exec(list.text)?.[1]);
   expect(id, `no current tab in:\n${list.text}`);
   return id;
@@ -896,10 +998,11 @@ async function launchChromium(profile = "profile") {
   );
   const wsEndpoint = await new Promise<string>((resolve, reject) => {
     let output = "";
-    const timer = setTimeout(
-      () => reject(new Error(`Chromium didn't start:\n${output}`)),
-      30_000,
-    );
+    // A cold start takes a second or two, but a starved machine has taken over 30 s. Killed on failure, as its PID isn't in `cleanups` yet
+    const timer = setTimeout(() => {
+      killPid(child.pid);
+      reject(new Error(`Chromium didn't start in 60 s:\n${output}`));
+    }, 60_000);
     child.stderr!.on("data", (data: Buffer) => {
       output += data.toString();
       const match = /DevTools listening on (ws:\/\/\S+)/.exec(output);

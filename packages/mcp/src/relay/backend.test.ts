@@ -223,11 +223,14 @@ describe("RelayBackend", () => {
   });
 
   it("finds a tab the extension reports a moment after it appears", async () => {
-    // The real extension sends `state` 100 ms after a change
-    const extension = await connect({ stateDelayMs: 150 });
+    // The real extension sends `state` 100 ms after a change; held here, so a slow `openTab()` can't let it through first
+    const extension = await connect();
+    extension.holdState();
     const tabId = await extension.openTab("about:blank");
     expect(relay.backend.tabs().map((tab) => tab.tabId)).not.toContain(tabId);
-    expect((await relay.backend.findTab(tabId))?.tabId).toBe(tabId);
+    const found = relay.backend.findTab(tabId);
+    setTimeout(() => extension.releaseState(), 150);
+    expect((await found)?.tabId).toBe(tabId);
   });
 
   it("doesn't find a tab the extension never reports", async () => {
