@@ -93,6 +93,8 @@ export class LaunchedBackend implements BrowserBackend {
       `--user-data-dir=${userDataDir}`,
       "--no-first-run",
       "--no-default-browser-check",
+      // On a Mac, a Chromium new to the machine waits on the Keychain for its cookie key (loading no page meanwhile) and prompts the user; this profile's logins are test-only
+      "--use-mock-keychain",
       "--no-proxy-server",
       "--window-size=1280,800",
       "about:blank",
