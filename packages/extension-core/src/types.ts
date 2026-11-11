@@ -63,7 +63,7 @@ export type ConnectionStatus =
   | { state: "updateServer"; daemonVersion?: string }
   /** The daemon's protocol is newer than the extension's */
   | { state: "updateExtension"; daemonVersion?: string }
-  /** Another browser or profile holds the daemon's connection (close code 4002) */
+  /** The daemon refused this browser (close code 4002): too many browsers are connected (`MAX_BROWSERS`), or, with daemons before 2.4, another browser or profile holds its connection */
   | { state: "anotherBrowser" };
 
 /** An AI app using the browser, with its tabs, for the popup */
@@ -82,5 +82,7 @@ export type BrowserControlView = {
   paused: boolean;
   /** The custom port to look for the daemon on, or `null` for the default ports */
   relayPort: number | null;
+  /** The name the user gave this browser profile (`ExtensionState.label`), or `null` */
+  label: string | null;
   apps: BrowserControlApp[];
 };

@@ -79,7 +79,13 @@ press Tab`,
   it("lists every command in the definition, or names it for help", () => {
     const description = browserTool(["cdp"]).description ?? "";
     for (const command of COMMANDS) {
-      if (command.listed === false || command.name === "help") continue;
+      // Commands for several browsers stay out of the definition, which is the same however many are connected: `help` and `tab list` name them while several are
+      if (
+        command.listed === false ||
+        command.severalBrowsers ||
+        command.name === "help"
+      )
+        continue;
       expect(description, command.name).toMatch(
         new RegExp(`(^|[\\s|,])${command.name}\\b`, "m"),
       );

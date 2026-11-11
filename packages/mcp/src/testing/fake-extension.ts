@@ -90,6 +90,8 @@ export class FakeChromium {
         `--user-data-dir=${userDataDir}`,
         "--no-first-run",
         "--no-default-browser-check",
+        // On a Mac, a Chromium new to the machine waits on the Keychain for its cookie key (loading no page meanwhile) and prompts the user; this profile's logins are test-only
+        "--use-mock-keychain",
         "--disable-gpu",
         "about:blank",
       ],
@@ -191,6 +193,12 @@ export type FakeExtensionOptions = {
   stateDelayMs?: number;
   /** Sent in `hello`, to tell browsers apart. Default: the Chromium's */
   userAgent?: string;
+  /** `hello.browserId`, as extensions from 2.3 send (`createBrowserId()`). Default: none, like 2.2 */
+  browserId?: string;
+  /** The window its tabs are in. Window IDs tell browsers without a `browserId` apart. Default: 1 */
+  windowId?: number;
+  /** `state.label`, the name the user gave the profile */
+  label?: string;
 };
 
 /**
@@ -218,6 +226,11 @@ export class FakeExtension {
   daemonNonce: string | null = null;
   /** The code the popup would show next to **Allow** (`pairingCode()`), once the nonces were exchanged and the reveal matched the commitment */
   code: string | null = null;
+  /** `state.label` */
+  label: string | undefined;
+  /** `state.lastFocusedAt`, set by `focus()` */
+  lastFocusedAt: number | undefined;
+  private windowId = 1;
   private revealWaiter: ((nonce: string) => void) | null = null;
 
   private sessionTabs = new Map<string, number>();
@@ -225,6 +238,8 @@ export class FakeExtension {
   private inputQueues = new Map<number, Promise<unknown>>();
   private stateTimer: NodeJS.Timeout | undefined;
   private stateDelayMs = 10;
+  /** While held, tab changes aren't reported (`holdState()`) */
+  private stateHeld = false;
   private tabWaiters = new Map<string, (tab: FakeTab) => void>();
   private offChromium: () => void;
   private ws!: WebSocket;
@@ -259,6 +274,8 @@ export class FakeExtension {
     );
     extension.ws = ws;
     extension.port = options.port;
+    extension.windowId = options.windowId ?? 1;
+    extension.label = options.label;
     extension.stateDelayMs = options.stateDelayMs ?? 10;
     await new Promise((resolve, reject) => {
       ws.once("open", resolve);
@@ -298,12 +315,21 @@ export class FakeExtension {
         version: version.product.split("/")[1] ?? "",
         userAgent: options.userAgent ?? version.userAgent,
       },
+      ...(options.browserId ? { browserId: options.browserId } : {}),
       capabilities: ["tabOpened"],
       challenge: extension.challenge,
-      state: extension.state(),
+      // Like the real extension, no label or focus in `hello`: they come in the first `state` after `welcome`
+      state: {
+        ...extension.state(),
+        label: undefined,
+        lastFocusedAt: undefined,
+      },
     });
     extension.welcome = await welcome;
     ws.on("message", (data) => void extension.onDaemonMessage(data.toString()));
+    if (extension.label || extension.lastFocusedAt) {
+      extension.sendState();
+    }
     if (extension.pairing === "pending" && options.pairingNonce !== false) {
       await extension.exchangePairingNonces();
     }
@@ -373,6 +399,18 @@ export class FakeExtension {
     return (await this.tabForTarget(targetId)).tabId;
   }
 
+  /** The user names this browser profile in the popup (`state.label`), or clears its name with `undefined` */
+  setLabel(label: string | undefined) {
+    this.label = label;
+    this.sendState();
+  }
+
+  /** A window of this browser gains focus (`state.lastFocusedAt`) */
+  focus() {
+    this.lastFocusedAt = Date.now();
+    this.sendState();
+  }
+
   /** Clicks **Allow** in the popup */
   allow() {
     this.pairing = "paired";
@@ -435,7 +473,13 @@ export class FakeExtension {
               appId: tab.appId,
               attached: !!tab.sessionId,
             }));
-    return { tabs, paused: this.paused, pairing: this.pairing };
+    return {
+      tabs,
+      paused: this.paused,
+      pairing: this.pairing,
+      ...(this.label ? { label: this.label } : {}),
+      ...(this.lastFocusedAt ? { lastFocusedAt: this.lastFocusedAt } : {}),
+    };
   }
 
   /** Closes the connection (like the service worker stopping); the daemon releases the tabs */
@@ -663,7 +707,7 @@ export class FakeExtension {
     const tab: FakeTab = {
       tabId: this.chromium.tabId(info.targetId),
       targetId: info.targetId,
-      windowId: 1,
+      windowId: this.windowId,
       url: info.url,
       title: info.title,
       pinned: false,
@@ -720,8 +764,23 @@ export class FakeExtension {
     }
   }
 
+  /** Stops reporting tab changes until `releaseState()`, as when the extension's `state` comes late */
+  holdState() {
+    this.stateHeld = true;
+  }
+
+  releaseState() {
+    this.stateHeld = false;
+    this.sendState();
+  }
+
   private sendState() {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.welcome) {
+    if (
+      !this.ws ||
+      this.ws.readyState !== WebSocket.OPEN ||
+      !this.welcome ||
+      this.stateHeld
+    ) {
       return;
     }
     clearTimeout(this.stateTimer);

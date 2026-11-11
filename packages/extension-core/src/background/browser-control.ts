@@ -9,14 +9,20 @@ import {
   LEGACY_PORT,
   RELAY_PORTS,
   RELAY_PROTOCOL_VERSION,
+  createBrowserId,
+  isValidBrowserId,
   isValidRelayPort,
   pairingRequiredMessage,
 } from "@browsermcp/protocol";
 
+import { normalizeBrowserLabel } from "../browser-label";
 import {
   appGroupsItem,
+  browserIdItem,
+  browserLabelItem,
   connectionStatusItem,
   lastActiveAppItem,
+  lastFocusedAtItem,
   legacyPortItem,
   legacyServerItem,
   pausedItem,
@@ -94,6 +100,8 @@ export class BrowserControl {
   readonly debugger: DebuggerSessions;
   readonly connection: RelayConnection;
   #daemon: Daemon | null = null;
+  /** `#getBrowserId()`'s answer, so concurrent `hello`s don't each make an ID */
+  #browserId: Promise<string> | null = null;
   #stateTimer: ReturnType<typeof setTimeout> | undefined;
   #onEvent: BrowserControlOptions["onEvent"];
   #onActivity: BrowserControlOptions["onActivity"];
@@ -128,20 +136,23 @@ export class BrowserControl {
       getLegacyPort: async () =>
         (legacyPortOverride && (await legacyPortItem.getValue())) ||
         LEGACY_PORT,
-      createHello: async (challenge) => ({
-        type: "hello",
-        protocol: RELAY_PROTOCOL_VERSION,
-        extensionVersion: browser.runtime.getManifest().version,
-        browser: getBrowserInfo(),
-        capabilities: ["popupWindows", "tabOpened", "tabGroups"],
-        challenge,
-        // Nothing until the daemon proves a key the user allowed (`onWelcome`)
-        state: {
-          tabs: [],
-          paused: await pausedItem.getValue(),
-          pairing: "pending",
-        },
-      }),
+      createHello: async (challenge) => {
+        const [browserId, paused] = await Promise.all([
+          this.#getBrowserId(),
+          pausedItem.getValue(),
+        ]);
+        return {
+          type: "hello",
+          protocol: RELAY_PROTOCOL_VERSION,
+          extensionVersion: browser.runtime.getManifest().version,
+          browser: getBrowserInfo(),
+          browserId,
+          capabilities: ["popupWindows", "tabOpened", "tabGroups"],
+          challenge,
+          // Nothing about the user (tabs, the browser's name, focus) until the daemon proves a key they allowed (`onWelcome`, which sends `state` at once)
+          state: { tabs: [], paused, pairing: "pending" },
+        };
+      },
       verifyWelcome: (welcome, challenge, port) =>
         verifyDaemonSignature({
           challenge,
@@ -187,6 +198,8 @@ export class BrowserControl {
       }
     };
     const onStartup = () => this.connection.ensureRunning();
+    const onFocusChanged = (windowId: number) =>
+      void this.#onFocusChanged(windowId, Date.now());
 
     const removers = [
       this.debugger.addListeners(),
@@ -205,6 +218,7 @@ export class BrowserControl {
       addListener(browser.webNavigation.onBeforeNavigate, onBeforeNavigate),
       addListener(browser.alarms.onAlarm, onAlarm),
       addListener(browser.runtime.onStartup, onStartup),
+      addListener(browser.windows.onFocusChanged, onFocusChanged),
     ];
     void browser.alarms.create(WATCHDOG_ALARM, { periodInMinutes: 0.5 });
     void this.#init();
@@ -231,6 +245,24 @@ export class BrowserControl {
     ]);
     await this.#updateBadge();
     this.connection.ensureRunning();
+  }
+
+  /** This browser profile's ID (`hello`'s `browserId`): the one in `storage.local`, or a new one kept there */
+  #getBrowserId(): Promise<string> {
+    this.#browserId ??= (async () => {
+      const stored = await browserIdItem.getValue();
+      if (isValidBrowserId(stored)) {
+        return stored;
+      }
+      const browserId = createBrowserId();
+      await browserIdItem.setValue(browserId);
+      return browserId;
+    })().catch((error: unknown) => {
+      // Tried again on the next `hello`
+      this.#browserId = null;
+      throw error;
+    });
+    return this.#browserId;
   }
 
   // --- The daemon ---
@@ -453,6 +485,31 @@ export class BrowserControl {
     }
   }
 
+  /**
+   * A window of this profile gained focus: records when (`lastFocusedAt`), so the daemon opens agents' new tabs in the browser the user used last, and reports it with the next `state` (debounced, and only while connected: it never starts a connection). Only normal windows the extension exposes count, where agents' tabs open: not `WINDOW_ID_NONE` (focus left the browser), DevTools or popups, nor incognito windows unless the extension is allowed there
+   */
+  async #onFocusChanged(windowId: number, at: number): Promise<void> {
+    if (windowId === (browser.windows.WINDOW_ID_NONE ?? -1)) {
+      return;
+    }
+    const window = await browser.windows.get(windowId).catch(() => null);
+    if (window?.type !== "normal") {
+      return;
+    }
+    if (
+      window.incognito &&
+      !(await browser.extension.isAllowedIncognitoAccess().catch(() => false))
+    ) {
+      return;
+    }
+    // Focus events' checks may finish out of order: keep the latest
+    if (((await lastFocusedAtItem.getValue()) ?? 0) >= at) {
+      return;
+    }
+    await lastFocusedAtItem.setValue(at);
+    this.#scheduleState();
+  }
+
   async #onTabRemoved(tabId: number): Promise<void> {
     await forgetTab(tabId);
     this.#scheduleState();
@@ -569,20 +626,22 @@ export class BrowserControl {
     this.connection.sendEvent({ type: "state", data: await this.getState() });
   }
 
-  /** What the extension reports to the daemon: nothing until the user allowed its key */
+  /** What the extension reports to the daemon: nothing about the user (tabs, the browser's name, focus) until they allowed its key */
   async getState(): Promise<ExtensionState> {
     const paused = await pausedItem.getValue();
     if (!this.#daemon?.paired) {
       return { tabs: [], paused, pairing: "pending" };
     }
-    const [tabs, rules, groups] = await Promise.all([
+    const [tabs, rules, groups, profile] = await Promise.all([
       browser.tabs.query({ windowType: "normal" }),
       getExposureRules(),
       appGroupsItem.getValue(),
+      getProfileState(),
     ]);
     return {
       paused,
       pairing: "paired",
+      ...profile,
       tabs: tabs
         .filter((tab) => isExposedTab(tab, rules))
         .map((tab) => ({
@@ -656,19 +715,29 @@ export class BrowserControl {
     this.connection.reconnect();
   }
 
+  /** Names this browser profile (`label`), or unsets the name with `null` or an empty one, and tells the daemon at once */
+  async setLabel(label: string | null): Promise<void> {
+    if (label !== null && typeof label !== "string") {
+      throw new Error("Invalid browser name");
+    }
+    await browserLabelItem.setValue(normalizeBrowserLabel(label));
+    await this.#sendState();
+  }
+
   async switchToTab(tabId: number): Promise<void> {
     await focusTab(await browser.tabs.get(tabId));
   }
 
   /** What the popup shows */
   async getView(): Promise<BrowserControlView> {
-    const [connection, legacyServer, paused, groups, relayPort] =
+    const [connection, legacyServer, paused, groups, relayPort, label] =
       await Promise.all([
         connectionStatusItem.getValue(),
         legacyServerItem.getValue(),
         pausedItem.getValue(),
         appGroupsItem.getValue(),
         relayPortItem.getValue(),
+        browserLabelItem.getValue(),
       ]);
     const tabs = await browser.tabs.query({});
     const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
@@ -701,9 +770,26 @@ export class BrowserControl {
       legacyServer,
       paused,
       relayPort,
+      label,
       apps,
     };
   }
+}
+
+/** What a paired daemon's `state` says about this browser profile: its name and when it was last focused, each only once there is one */
+async function getProfileState(): Promise<
+  Pick<ExtensionState, "label" | "lastFocusedAt">
+> {
+  const [stored, lastFocusedAt] = await Promise.all([
+    browserLabelItem.getValue(),
+    lastFocusedAtItem.getValue(),
+  ]);
+  // Normalized again, in case it was set some other way (the service worker's console)
+  const label = normalizeBrowserLabel(stored);
+  return {
+    ...(label && { label }),
+    ...(lastFocusedAt !== null && { lastFocusedAt }),
+  };
 }
 
 async function getExposureRules(): Promise<ExposureRules> {

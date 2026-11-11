@@ -63,10 +63,17 @@ export function errorMessage(error: unknown): string {
     "",
   );
   message = message.replace(/^Error: /, "");
-  if (/Target page, context or browser has been closed/.test(message)) {
+  if (isPageClosedError(error)) {
     return "The tab closed or was released. Run `tab list` and `tab select <id>`, or `goto <url>`";
   }
   return message;
+}
+
+/** Playwright's error for a Page that went away: the tab closed, was released, or its target detached (and may be re-attaching as a new Page) */
+export function isPageClosedError(error: unknown): boolean {
+  return /Target page, context or browser has been closed/.test(
+    error instanceof Error ? error.message : String(error),
+  );
 }
 
 export function sleep(ms: number) {

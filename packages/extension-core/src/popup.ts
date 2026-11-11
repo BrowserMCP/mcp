@@ -10,6 +10,7 @@ export {
   type BrowserControlMessages,
   sendBrowserControlMessage,
 } from "./messages";
+export * from "./browser-label";
 export * from "./types";
 
 /** How often the open popup refreshes what it shows (the attached tabs live in the background's memory) */

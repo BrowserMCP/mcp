@@ -6,6 +6,7 @@ import type { CDPSession, Page } from "playwright-core";
 import {
   click,
   drag,
+  ACTION_TIMEOUT_MS,
   FIND_TIMEOUT_MS,
   hover,
   moveCursor,
@@ -62,9 +63,20 @@ export interface StepContext {
   agentCdp(): Promise<NonNullable<TabState["cdp"]>>;
   tabs: {
     list(): Promise<string>;
-    create(url?: string): Promise<number>;
+    /** Opens a tab of the agent's own, in `browser` (an ID or label) or where the session's new tabs open */
+    create(url?: string, browser?: string): Promise<number>;
+    /** The label of the tab's browser while several browsers are connected, else undefined */
+    browserOf(tabId: number): string | undefined;
     select(tabId: number): Promise<void>;
     close(tabId?: number): Promise<void>;
+  };
+  /** The connected browsers (Chrome profiles) */
+  browsers: {
+    /** Whether several are connected */
+    several(): boolean;
+    list(): string;
+    /** Opens the session's new tabs in this browser (an ID or label); returns its label */
+    use(name: string): string;
   };
 }
 
@@ -74,6 +86,8 @@ export type CommandDef = {
   usage: string;
   /** False when another command's usage line covers this one */
   listed?: boolean;
+  /** Listed by `help` only while several browsers are connected */
+  severalBrowsers?: boolean;
   /** Details for `help <command>` */
   help: string;
   flags?: FlagSpec;
@@ -83,6 +97,8 @@ export type CommandDef = {
   reportsChanges?: "always" | "changes";
   /** Navigates by design, so the engine doesn't note the URL change */
   navigates?: boolean;
+  /** Only reads the page, so the engine runs it again when the tab re-attached (a new Page) while it ran */
+  reads?: boolean;
   /** Doesn't need a page (tab commands, help, wait <ms>) */
   noPage?: boolean;
   /** Runs while a dialog is open, which blocks the page (tab commands, help, `wait <ms>`, `dialog`) */
@@ -177,7 +193,7 @@ async function setChecked(ctx: StepContext, checked: boolean) {
   const locator = await resolveOne(page, t);
   let current: boolean;
   try {
-    current = await locator.isChecked({ timeout: FIND_TIMEOUT_MS });
+    current = await locator.isChecked({ timeout: ACTION_TIMEOUT_MS });
   } catch {
     throw new StepError(`${t.source} isn't a checkbox, radio or switch`);
   }
@@ -223,7 +239,7 @@ async function evaluate(page: Page, src: string, element?: Target) {
       (window as unknown as Record<string, Element>)[key] = el;
     },
     key,
-    { timeout: FIND_TIMEOUT_MS },
+    { timeout: ACTION_TIMEOUT_MS },
   );
   return page.evaluate(
     call(
@@ -543,7 +559,7 @@ export const COMMANDS: CommandDef[] = [
         await locator.evaluate(
           (el) => el.scrollIntoView({ block: "center", behavior: "instant" }),
           undefined,
-          { timeout: FIND_TIMEOUT_MS },
+          { timeout: ACTION_TIMEOUT_MS },
         );
         return;
       }
@@ -622,7 +638,7 @@ export const COMMANDS: CommandDef[] = [
           };
         },
         [direction, px, typeof inFlag !== "string"] as const,
-        { timeout: FIND_TIMEOUT_MS },
+        { timeout: ACTION_TIMEOUT_MS },
       );
       const what = inner ? "the scroll area" : "the page";
       if (max <= 0) ctx.note(`${what} doesn't scroll`);
@@ -654,7 +670,7 @@ export const COMMANDS: CommandDef[] = [
       const box = await locator.boundingBox().catch(() => null);
       if (box)
         await moveCursor(page, box.x + box.width / 2, box.y + box.height / 2);
-      await locator.fill(text, { force: true, timeout: FIND_TIMEOUT_MS });
+      await locator.fill(text, { force: true, timeout: ACTION_TIMEOUT_MS });
       await fillLike(ctx, page, !!ctx.args.flags.submit);
     },
   },
@@ -713,7 +729,7 @@ export const COMMANDS: CommandDef[] = [
       await settled(ctx, page, async () => {
         const selected = await locator.selectOption(values, {
           force: true,
-          timeout: FIND_TIMEOUT_MS,
+          timeout: ACTION_TIMEOUT_MS,
         });
         if (!selected.length)
           throw new StepError(`No option of ${t.source} matches`);
@@ -760,10 +776,10 @@ export const COMMANDS: CommandDef[] = [
       const isFileInput = await locator.evaluate(
         (el) => el instanceof HTMLInputElement && el.type === "file",
         undefined,
-        { timeout: FIND_TIMEOUT_MS },
+        { timeout: ACTION_TIMEOUT_MS },
       );
       if (isFileInput) {
-        await locator.setInputFiles(files, { timeout: FIND_TIMEOUT_MS });
+        await locator.setInputFiles(files, { timeout: ACTION_TIMEOUT_MS });
         return;
       }
       const chooser = page.waitForEvent("filechooser", {
@@ -893,11 +909,16 @@ export const COMMANDS: CommandDef[] = [
     help: "Lists the browser's tabs (* marks yours), opens a background tab of your own, switches to a tab (one of the user's too), or closes a tab you opened.",
     noPage: true,
     navigates: true,
+    flags: { browser: true },
     maxArgs: 2,
     whileDialog: true,
     timeoutMs: () => NAVIGATION_STEP_MS,
     async run(ctx) {
       const sub = positional(ctx.args, 0, "list, new, select or close");
+      const browser = ctx.args.flags.browser;
+      if (browser !== undefined && sub !== "new") {
+        throw new StepError("--browser goes with `tab new`");
+      }
       const id = () => {
         const value = Number(positional(ctx.args, 1, "<tabId>"));
         if (!Number.isInteger(value))
@@ -909,8 +930,10 @@ export const COMMANDS: CommandDef[] = [
         const url = ctx.args.positional[1]?.text;
         const tabId = await ctx.tabs.create(
           url ? normalizeUrl(url) : undefined,
+          typeof browser === "string" ? browser : undefined,
         );
-        ctx.note(`tab ${tabId}`);
+        const label = ctx.tabs.browserOf(tabId);
+        ctx.note(label ? `tab ${tabId} in ${label}` : `tab ${tabId}`);
       } else if (sub === "select") await ctx.tabs.select(id());
       else if (sub === "close") {
         await ctx.tabs.close(ctx.args.positional[1] ? id() : undefined);
@@ -918,7 +941,26 @@ export const COMMANDS: CommandDef[] = [
     },
   },
   {
+    name: "browser",
+    usage:
+      'browser list | browser use "<name>"|<id>   # the connected browsers (Chrome profiles), and which one new tabs open in',
+    help: 'Lists the connected browsers (Chrome profiles), * marking the one your new tabs open in, or chooses it. New tabs open in the browser of the tab you selected or opened last, else the one the user used last; `browser use` changes that until you select a tab elsewhere, and `tab new --browser "<name>"|<id>` opens one tab elsewhere. Quote names with spaces ("Chrome 2"). Tab IDs from `tab list` work across browsers.',
+    severalBrowsers: true,
+    noPage: true,
+    whileDialog: true,
+    maxArgs: 2,
+    async run(ctx) {
+      const sub = positional(ctx.args, 0, "list or use");
+      if (sub === "list") ctx.print(ctx.browsers.list());
+      else if (sub === "use") {
+        const label = ctx.browsers.use(positional(ctx.args, 1, "<name|id>"));
+        ctx.note(`new tabs open in ${label}`);
+      } else throw new StepError("browser takes list or use");
+    },
+  },
+  {
     name: "snapshot",
+    reads: true,
     usage:
       "snapshot [<target>] [-i] [--depth N] [--max N|all]   # -i: interactive elements, headings, landmarks",
     help: "Prints the accessibility tree with refs (e12, f1e3 in iframes) to use as targets. -i keeps interactive elements, landmarks, headings and cells. A target or --depth narrows it; refs stay valid either way.",
@@ -942,6 +984,7 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: "find",
+    reads: true,
     usage: 'find "<text>" [--max N|all]   # snapshot lines containing the text',
     help: "Prints the snapshot lines whose name, text or URL contain the text (ignoring case), each with its ancestors, so you can act on a ref without a full snapshot.",
     flags: { max: true },
@@ -963,6 +1006,7 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: "get",
+    reads: true,
     usage:
       "get text|value|count [<target>] [--max N|all] | get attr <name> <target> | get url | get title",
     help: "text: the target's visible text (the page's without a target). value: a field's value. count: how many elements match. attr: an attribute.",
@@ -987,14 +1031,14 @@ export const COMMANDS: CommandDef[] = [
         const name = positional(ctx.args, 1, "<name>");
         const locator = await resolveOne(page, target(ctx.args, 2));
         const value = await locator.getAttribute(name, {
-          timeout: FIND_TIMEOUT_MS,
+          timeout: ACTION_TIMEOUT_MS,
         });
         return ctx.print(value ?? "(none)");
       }
       if (what === "value") {
         const locator = await resolveOne(page, target(ctx.args, 1));
         return ctx.print(
-          cap(await locator.inputValue({ timeout: FIND_TIMEOUT_MS }), max),
+          cap(await locator.inputValue({ timeout: ACTION_TIMEOUT_MS }), max),
         );
       }
       if (what === "text") {
@@ -1002,7 +1046,7 @@ export const COMMANDS: CommandDef[] = [
           ? parseTarget(ctx.args.positional[1].text)
           : undefined;
         const locator = t ? await resolveOne(page, t) : page.locator("body");
-        const text = (await locator.innerText({ timeout: FIND_TIMEOUT_MS }))
+        const text = (await locator.innerText({ timeout: ACTION_TIMEOUT_MS }))
           .replace(/\n{3,}/g, "\n\n")
           .trim();
         return ctx.print(
@@ -1014,6 +1058,7 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: "screenshot",
+    reads: true,
     usage:
       "screenshot [<target>] [--full] [--path <file>]   # JPEG, longest side ≤ 1568 px",
     help: "Adds a JPEG of the viewport (or the element, or the full page) to the result, longest side ≤ 1568 px. --path also saves it, overwriting an existing file (paths: absolute, under ~, or relative to your MCP root or working directory).",
@@ -1249,7 +1294,11 @@ COMMANDS.push({
       ctx.print(
         [
           ...availableCommands(ctx.capabilities)
-            .filter((command) => command.listed !== false)
+            .filter(
+              (command) =>
+                command.listed !== false &&
+                (!command.severalBrowsers || ctx.browsers.several()),
+            )
             .map((command) => command.usage),
           "",
           TARGETS_HELP,

@@ -3,7 +3,7 @@ import { storage } from "wxt/utils/storage";
 import type { ConnectionStatus, TabGroupColor } from "./types";
 
 /*
- * Browser control's state lives in `storage.session`: it survives the service worker stopping (which Chrome does whenever it's idle), but not a browser restart. Debugger attachments are never stored: they're in memory, and the daemon attaches again after a restart
+ * Browser control's state lives in `storage.session`: it survives the service worker stopping (which Chrome does whenever it's idle), but not a browser restart. Debugger attachments are never stored: they're in memory, and the daemon attaches again after a restart. What the user chose (paired keys, the port, the browser's name) and the browser's ID are in `storage.local`
  */
 
 /** The connection to the daemon, for the popup. Reset when the service worker starts, so it never shows a connection that's gone */
@@ -58,6 +58,24 @@ export const pairedDaemonKeysItem = storage.defineItem<string[]>(
 /** The daemon's port when it runs with `--port`, set by hand (e.g. `chrome.storage.local.set({ relayPort: 9123 })` in the service worker's console) or by tests. Only that port is tried then; otherwise `RELAY_PORTS` */
 export const relayPortItem = storage.defineItem<number | null>(
   "local:relayPort",
+  { fallback: null },
+);
+
+/** This browser profile's ID for the daemon (`hello`'s `browserId`, from `createBrowserId()`), made once. In `storage.local`, so the daemon knows the profile again after either side restarts */
+export const browserIdItem = storage.defineItem<string | null>(
+  "local:browserId",
+  { fallback: null },
+);
+
+/** The name the user gave this browser profile in the popup's settings (`ExtensionState.label`), trimmed and capped (`normalizeBrowserLabel()`), or null */
+export const browserLabelItem = storage.defineItem<string | null>(
+  "local:browserLabel",
+  { fallback: null },
+);
+
+/** When a window of this profile last gained focus (`ExtensionState.lastFocusedAt`), so a service worker restart keeps it */
+export const lastFocusedAtItem = storage.defineItem<number | null>(
+  "session:browserControlLastFocusedAt",
   { fallback: null },
 );
 

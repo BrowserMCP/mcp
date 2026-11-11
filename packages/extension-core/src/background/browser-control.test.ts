@@ -6,10 +6,16 @@ import {
   type ExtensionEvent,
   type ExtensionRequest,
   type ExtensionState,
+  isValidBrowserId,
   pairingRequiredMessage,
 } from "@browsermcp/protocol";
 
-import { connectionStatusItem, pausedItem } from "../storage";
+import {
+  browserIdItem,
+  connectionStatusItem,
+  lastFocusedAtItem,
+  pausedItem,
+} from "../storage";
 import { TAB_GROUP_HEX } from "../types";
 import {
   BrowserControl,
@@ -1288,3 +1294,151 @@ function hexToRgba(hex: string) {
   const value = Number.parseInt(hex.slice(1), 16);
   return [(value >> 16) & 255, (value >> 8) & 255, value & 255, 255];
 }
+
+describe("this browser profile (several browsers on one daemon)", () => {
+  /** The service worker stops, so the next `start()` is a restart */
+  function stopServiceWorker() {
+    stopListeners.forEach((stop) => stop());
+    stopListeners = [];
+  }
+
+  it("sends the same browserId in every hello, across service worker restarts", async () => {
+    const { ws } = await start();
+    const [hello] = ws.messages("hello");
+    expect(isValidBrowserId(hello.browserId)).toBe(true);
+    expect(await browserIdItem.getValue()).toBe(hello.browserId);
+
+    stopServiceWorker();
+    const again = await start();
+    expect(again.ws.messages("hello")[0].browserId).toBe(hello.browserId);
+  });
+
+  it("replaces a stored browserId that isn't valid", async () => {
+    await browserIdItem.setValue("not an id");
+    const { ws } = await start();
+    const { browserId } = ws.messages("hello")[0];
+    expect(isValidBrowserId(browserId)).toBe(true);
+    expect(await browserIdItem.getValue()).toBe(browserId);
+  });
+
+  it("sends the label in state, at once when it changes", async () => {
+    const key = await createDaemonKey();
+    const { ws, control } = await startPaired(key);
+    expect(await latestState(ws)).not.toHaveProperty("label");
+
+    const sent = events(ws, "state").length;
+    await control.setLabel("  Work  ");
+    // Not debounced: sent before `setLabel()` resolves
+    expect(events(ws, "state")).toHaveLength(sent + 1);
+    expect(await latestState(ws)).toMatchObject({ label: "Work" });
+    expect((await control.getView()).label).toBe("Work");
+
+    await control.setLabel("x".repeat(60));
+    expect((await latestState(ws)).label).toBe("x".repeat(40));
+
+    // Kept across restarts, and sent once the daemon proved its key
+    stopServiceWorker();
+    const again = await start();
+    expect(again.ws.messages("hello")[0].state).not.toHaveProperty("label");
+    await welcome(again.ws, key);
+    await vi.waitFor(async () =>
+      expect((await latestState(again.ws)).label).toBe("x".repeat(40)),
+    );
+
+    // Empty unsets it
+    await again.control.setLabel("   ");
+    expect(await latestState(again.ws)).not.toHaveProperty("label");
+    expect((await again.control.getView()).label).toBeNull();
+  });
+
+  it("sends neither the label nor focus before the user allowed the daemon's key", async () => {
+    chrome.addTab({ id: 1 });
+    await lastFocusedAtItem.setValue(1000);
+    const { ws, control } = await start();
+    await control.setLabel("Personal");
+    expect(ws.messages("hello")[0].state).toEqual({
+      tabs: [],
+      paused: false,
+      pairing: "pending",
+    });
+    const key = await createDaemonKey();
+    await welcome(ws, key);
+    await vi.waitFor(async () =>
+      expect(await connectionStatusItem.getValue()).toMatchObject({
+        pairing: "pending",
+      }),
+    );
+    await control.setLabel("Work");
+    expect(await latestState(ws)).toEqual({
+      tabs: [],
+      paused: false,
+      pairing: "pending",
+    });
+
+    await control.allow(key.publicKey);
+    expect(await latestState(ws)).toMatchObject({
+      label: "Work",
+      lastFocusedAt: 1000,
+    });
+  });
+
+  it("reports when a window of this profile gained focus, and keeps it across restarts", async () => {
+    const { ws } = await startPaired(await createDaemonKey());
+    expect(await latestState(ws)).not.toHaveProperty("lastFocusedAt");
+
+    const before = Date.now();
+    await fakeBrowser.windows.onFocusChanged.trigger(1);
+    await vi.waitFor(async () =>
+      expect((await latestState(ws)).lastFocusedAt).toBeGreaterThanOrEqual(
+        before,
+      ),
+    );
+    const { lastFocusedAt } = await latestState(ws);
+
+    stopServiceWorker();
+    const again = await startPaired(await createDaemonKey());
+    expect((await latestState(again.ws)).lastFocusedAt).toBe(lastFocusedAt);
+  });
+
+  it("keeps the latest focus when focus events finish out of order", async () => {
+    await startPaired(await createDaemonKey());
+    const later = Date.now() + 60_000;
+    await lastFocusedAtItem.setValue(later);
+    await fakeBrowser.windows.onFocusChanged.trigger(1);
+    expect(await lastFocusedAtItem.getValue()).toBe(later);
+  });
+
+  it("ignores focus leaving the browser and windows it doesn't expose", async () => {
+    const { ws } = await startPaired(await createDaemonKey());
+    const incognito = chrome.addIncognitoWindow();
+    const popup = chrome.addPopupWindow();
+
+    // WINDOW_ID_NONE, an incognito window without access, a popup, a window that's gone
+    for (const windowId of [-1, incognito, popup, 999]) {
+      await fakeBrowser.windows.onFocusChanged.trigger(windowId);
+    }
+    expect(await lastFocusedAtItem.getValue()).toBeNull();
+
+    chrome.setIncognitoAccess(true);
+    await fakeBrowser.windows.onFocusChanged.trigger(incognito);
+    await vi.waitFor(async () =>
+      expect(await latestState(ws)).toHaveProperty("lastFocusedAt"),
+    );
+  });
+
+  it("gathers focus changes into one state, and connects for none", async () => {
+    const { ws } = await startPaired(await createDaemonKey());
+    await latestState(ws);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const sent = events(ws, "state").length;
+    const sockets = FakeWebSocket.instances.length;
+
+    for (let i = 0; i < 5; i++) {
+      await fakeBrowser.windows.onFocusChanged.trigger(1);
+    }
+    await vi.waitFor(() => expect(events(ws, "state")).toHaveLength(sent + 1));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(events(ws, "state")).toHaveLength(sent + 1);
+    expect(FakeWebSocket.instances).toHaveLength(sockets);
+  });
+});

@@ -1,9 +1,17 @@
 /** The engine against real headless Chromium (`LaunchedBackend`) and the fixture pages */
 import { writeFileSync } from "node:fs";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
-import { stepLimits } from "@/commands/engine";
+import { openedTabWait, stepLimits } from "@/commands/engine";
 import { HIDDEN_TAB_MESSAGE, hiddenTabs } from "@/commands/hidden-tabs";
 import { type Harness, startHarness } from "@/commands/testing/harness";
 
@@ -19,6 +27,8 @@ beforeAll(async () => {
 afterAll(() => h?.close());
 afterEach(() => {
   hiddenTabs.forceHidden = false;
+  if (h) h.backend.tabOpenedDelayMs = 0;
+  openedTabWait.ms = 5_000;
 });
 
 describe("output policy", () => {
@@ -615,6 +625,41 @@ describe("tabs", () => {
     expect(await h.run(s, `tab close ${tabId}`)).not.toContain("✗");
   });
 
+  it("notes a tab the page opened when the extension reports it late", async () => {
+    const s = session();
+    await h.run(s, `goto ${u("/popup")}`);
+    const opener = await currentTabId(s);
+    // Later than a click waits for a navigation to start
+    h.backend.tabOpenedDelayMs = 1500;
+    const link = await h.run(
+      s,
+      "click getByRole('link', { name: 'Open form' })",
+    );
+    expect(link).toMatch(/✓ click .* — opened tab \d+/);
+    const popup = await h.run(
+      s,
+      "click getByRole('button', { name: 'Open list' })\nget title",
+    );
+    // On the click's line, not the next step's
+    expect(popup).toMatch(/✓ click .* — opened tab \d+.*\n/);
+    expect(popup).not.toMatch(/✓ get title — opened/);
+    for (const text of [link, popup]) {
+      const tabId = /opened tab (\d+)/.exec(text)?.[1];
+      expect(await h.run(s, `tab close ${tabId}`)).not.toContain("✗");
+    }
+    // A window whose report is still to come when its step gives up waiting
+    openedTabWait.ms = 200;
+    h.backend.tabOpenedDelayMs = 20_000;
+    await h.run(s, "click getByRole('link', { name: 'Open form' })");
+    // Only windows a step opens count: later steps, on the opener or after coming back to it, wait for none (each would wait a minute)
+    openedTabWait.ms = 60_000;
+    const started = Date.now();
+    expect(
+      await h.run(s, `get title\ntab new\ntab select ${opener}\nget title`),
+    ).not.toContain("✗");
+    expect(Date.now() - started).toBeLessThan(15_000);
+  });
+
   it("uses a tab dragged into the app's group", async () => {
     const s = session();
     await h.run(s, `goto ${u("/misc")}`);
@@ -622,8 +667,10 @@ describe("tabs", () => {
     h.backend.assign(dragged, "test-app");
     expect(await h.run(s, "get title")).toContain("acme/widget");
     h.backend.assign(dragged, null);
-    await new Promise((r) => setTimeout(r, 100));
-    expect(h.backend.isClaimed(dragged)).toBe(false);
+    // Releasing the tab takes a few CDP round trips, which a loaded machine slows
+    await vi.waitFor(() => expect(h.backend.isClaimed(dragged)).toBe(false), {
+      timeout: 10_000,
+    });
     expect(await h.run(s, "get title")).toContain("There's no tab yet");
   });
 

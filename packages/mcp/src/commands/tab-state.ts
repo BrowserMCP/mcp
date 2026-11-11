@@ -59,6 +59,14 @@ export class TabState {
   cdp: CdpState | null = null;
   /** The internal CDP session (screenshots, focus emulation), not the agent's */
   internalCdp: CDPSession | null = null;
+  /** Windows the page opened (`Page.windowOpen`). The extension reports each as `tabOpened` a moment later, counted in `reportedOpens` */
+  windowOpens = 0;
+  reportedOpens = 0;
+
+  /** Windows the page opened that the extension hasn't reported (yet, or ever: a URL agents may not use) */
+  get unreportedOpens() {
+    return Math.max(0, this.windowOpens - this.reportedOpens);
+  }
   lastUsed = Date.now();
   private disposers: (() => void)[] = [];
 
@@ -116,13 +124,22 @@ export class TabState {
     });
   }
 
-  /** Clears the dialog when it closes without `dialog accept` or `dismiss` (the user answered it in Chrome). Playwright doesn't say, so this listens on the engine's CDP session */
-  async watchDialogClose(cdp: CDPSession) {
-    const listener = () => {
+  /**
+   * Listens on the engine's CDP session for what Playwright doesn't say: a dialog closing without `dialog accept` or `dismiss` (the user answered it in Chrome) clears it, and each window the page opens (`target=_blank`, `window.open`) counts in `windowOpens`
+   */
+  async watchCdp(cdp: CDPSession) {
+    const onDialogClosed = () => {
       this.dialog = null;
     };
-    cdp.on("Page.javascriptDialogClosed", listener);
-    this.disposers.push(() => cdp.off("Page.javascriptDialogClosed", listener));
+    const onWindowOpen = () => {
+      this.windowOpens++;
+    };
+    cdp.on("Page.javascriptDialogClosed", onDialogClosed);
+    cdp.on("Page.windowOpen", onWindowOpen);
+    this.disposers.push(() => {
+      cdp.off("Page.javascriptDialogClosed", onDialogClosed);
+      cdp.off("Page.windowOpen", onWindowOpen);
+    });
     await cdp.send("Page.enable").catch(() => {});
   }
 

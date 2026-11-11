@@ -26,7 +26,8 @@ export type RelayServerOptions = {
   log: Logger;
   /** `port`: the port the extension dialed (this server's), which the daemon signs with its challenge */
   onExtension(ws: WebSocket, port: number): void;
-  onCdp(ws: WebSocket): void;
+  /** `browserId`: which browser this Playwright drives (`?browser=<id>`), or undefined for the only one */
+  onCdp(ws: WebSocket, browserId: string | undefined): void;
   onClient(ws: WebSocket): void;
   /** `POST /shutdown`: resolves once the daemon is ready to exit (no calls in flight); the response is sent then */
   onShutdown(): Promise<void>;
@@ -159,7 +160,13 @@ export class RelayServer {
             return;
           }
           accept(
-            url.pathname === RelayPaths.cdp ? options.onCdp : options.onClient,
+            url.pathname === RelayPaths.cdp
+              ? (ws) =>
+                  options.onCdp(
+                    ws,
+                    url.searchParams.get("browser") ?? undefined,
+                  )
+              : options.onClient,
           );
           return;
         }

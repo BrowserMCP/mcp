@@ -122,6 +122,22 @@ function fromBase64(base64: string): Uint8Array<ArrayBuffer> {
 export const NO_EXTENSION_MESSAGE =
   "No browser is connected. Install the Browser MCP extension, or update it to 2.0: open chrome://extensions, turn on Developer mode and click Update";
 
+/** How many browsers (profiles) a daemon connects at once. One more is refused with `RelayCloseCode.anotherBrowser` */
+export const MAX_BROWSERS = 8;
+
+/** A `browserId`: base64url of 16 random bytes (22 characters) */
+export function createBrowserId(): string {
+  return toBase64(globalThis.crypto.getRandomValues(new Uint8Array(16)))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "");
+}
+
+/** Whether a `hello`'s `browserId` looks like one `createBrowserId()` makes. The daemon ignores any other */
+export function isValidBrowserId(id: unknown): id is string {
+  return typeof id === "string" && /^[\w-]{22}$/.test(id);
+}
+
 /** Names the product in `/browsermcp/status`, so the extension doesn't mistake another program on the port for the daemon */
 export const RELAY_PRODUCT = "browsermcp";
 
@@ -157,7 +173,7 @@ export type RelayStatus = {
 export const RelayCloseCode = {
   /** The other side's protocol version isn't supported. The reason says which side to update: `RelayUpdateReason` */
   unsupportedProtocol: 4001,
-  /** Another browser or profile is connected and an agent is using one of its tabs, or this browser was replaced by another. The extension keeps retrying */
+  /** Too many browsers (profiles) are connected (`MAX_BROWSERS`). Daemons before 2.4, which talked to one browser at a time, also sent it while another browser was in use or had replaced this one. The extension keeps retrying */
   anotherBrowser: 4002,
   /** The daemon is exiting (idle, or replaced by a newer one). The extension reconnects */
   shuttingDown: 4003,
@@ -214,6 +230,10 @@ export type ExtensionState = {
   paused: boolean;
   /** `pending` until the user clicks **Allow** for this daemon's key; `tabs` is empty and every request fails meanwhile */
   pairing: "paired" | "pending";
+  /** The name the user gave this browser profile in the popup's settings, e.g. `Work`. Absent until they set one, when the daemon names it after `BrowserInfo.name` (`Chrome 2`). Agents see it only while several browsers are connected. Like `tabs`, only sent once paired: never in `hello`'s state, so a program on the port can't read it */
+  label?: string;
+  /** When a normal window of this browser profile last gained focus (`chrome.windows.onFocusChanged`, ms since the epoch), so the daemon opens agents' new tabs in the browser the user used last. Absent until one has. Only sent once paired, like `label` */
+  lastFocusedAt?: number;
 };
 
 // --- Daemon → extension requests ---
@@ -307,6 +327,8 @@ export type ExtensionMessage =
       protocol: number;
       extensionVersion: string;
       browser: BrowserInfo;
+      /** A random ID the extension makes once per browser profile and keeps in `chrome.storage.local` (`createBrowserId()`), so the daemon knows the profile again after its service worker or the daemon restarts. Older extensions send none, and the daemon tells their browsers apart by user agent and window IDs */
+      browserId?: string;
       capabilities: RelayCapability[];
       /** Base64 of 32 random bytes, signed by the daemon in `welcome` */
       challenge: string;

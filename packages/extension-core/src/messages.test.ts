@@ -17,6 +17,7 @@ function fakeBrowserControl() {
     resume: vi.fn(async () => {}),
     allow: vi.fn(async () => {}),
     setRelayPort: vi.fn(async () => {}),
+    setLabel: vi.fn(async () => {}),
     switchToTab: vi.fn(async () => {}),
     connection: { connectNow: vi.fn() },
   };
@@ -57,6 +58,10 @@ describe("browser control's messages", () => {
       /popup/,
     );
     expect(control.resume).not.toHaveBeenCalled();
+    await expect(
+      sendBrowserControlMessage("setBrowserLabel", { label: "Work" }),
+    ).rejects.toThrow(/popup/);
+    expect(control.setLabel).not.toHaveBeenCalled();
   });
 
   it("fails without browser control (Firefox), and ping does nothing", async () => {

@@ -16,8 +16,9 @@ import {
 import type {
   AppInfo,
   BackendEvents,
+  BackendTab,
   BrowserBackend,
-  ExposedTab,
+  BrowserSummary,
 } from "@/contracts";
 
 type Tab = {
@@ -37,6 +38,8 @@ export class LaunchedBackend implements BrowserBackend {
   paused = false;
   /** What `unavailableReason()` returns; tests set it */
   unavailable: string | null = null;
+  /** How late `tabOpened` comes, as the extension's does when it first moves a popup into a window and groups the tab; tests set it */
+  tabOpenedDelayMs = 0;
   readonly claimed = new Set<number>();
   readonly activity: string[] = [];
   private tabsById = new Map<number, Tab>();
@@ -58,6 +61,11 @@ export class LaunchedBackend implements BrowserBackend {
       const opener = [...this.tabsById].find(
         ([, tab]) => tab.page === openerPage,
       )?.[0];
+      if (this.tabOpenedDelayMs) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, this.tabOpenedDelayMs),
+        );
+      }
       this.emit("tabOpened", {
         tabId,
         openerTabId: opener ?? -1,
@@ -85,6 +93,8 @@ export class LaunchedBackend implements BrowserBackend {
       `--user-data-dir=${userDataDir}`,
       "--no-first-run",
       "--no-default-browser-check",
+      // On a Mac, a Chromium new to the machine waits on the Keychain for its cookie key (loading no page meanwhile) and prompts the user; this profile's logins are test-only
+      "--use-mock-keychain",
       "--no-proxy-server",
       "--window-size=1280,800",
       "about:blank",
@@ -193,12 +203,34 @@ export class LaunchedBackend implements BrowserBackend {
     return this.unavailable;
   }
 
-  async findTab(tabId: number): Promise<ExposedTab | undefined> {
+  /** One browser, `b1` */
+  browsers(): BrowserSummary[] {
+    return [
+      {
+        id: "b1",
+        label: "Chrome",
+        connected: true,
+        pairing: "paired",
+        paused: this.paused,
+        tabs: this.tabsById.size,
+        connectedAt: 0,
+        usable: !this.paused,
+        default: true,
+      },
+    ];
+  }
+
+  async findTab(tabId: number): Promise<BackendTab | undefined> {
     return this.tabs().find((tab) => tab.tabId === tabId);
   }
 
-  tabs(): ExposedTab[] {
+  tabClosed(tabId: number): boolean {
+    return this.unavailable === null && !this.tabsById.has(tabId);
+  }
+
+  tabs(): BackendTab[] {
     return [...this.tabsById].map(([tabId, tab]) => ({
+      browser: "b1",
       tabId,
       windowId: 1,
       url: tab.page.url(),

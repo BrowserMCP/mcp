@@ -399,7 +399,7 @@ export class RelayConnection {
     if (status) {
       await this.#options.setStatus(status);
     }
-    // The daemon chose another browser: retrying at once would take it back, and two idle browsers would flip-flop. The watchdog (30 s) or the popup opening (`connectNow()`) tries again
+    // Too many browsers are connected, or (daemons before 2.4) the daemon chose another browser: retrying at once would be refused again, or take it back so two idle browsers flip-flop. The watchdog (30 s) or the popup opening (`connectNow()`) tries again
     if (code !== RelayCloseCode.anotherBrowser) {
       this.#scheduleRetry();
     }
