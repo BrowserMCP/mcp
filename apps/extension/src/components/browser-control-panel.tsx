@@ -274,7 +274,7 @@ function ConnectionAlert({
   if (connection.state === "updateServer" || legacyServer) {
     return <UpdateAlert kind="server" />;
   }
-  // Searching, another browser holds the connection, or the program on the port couldn't be verified
+  // Searching, the server refused this browser (too many connected, or another one in use with servers before 2.4), or the program on the port couldn't be verified
   if (connection.state === "untrusted") {
     return (
       <div className="px-4 pb-3">
@@ -300,7 +300,7 @@ function ConnectionAlert({
       </p>
       <p className="ps-4 text-muted-foreground">
         {connection.state === "anotherBrowser"
-          ? "An AI app is using a tab in that browser. This one connects once it's free."
+          ? `Another browser is using ${APP_NAME}, or too many are connected. This one connects once there's room.`
           : `Start an AI app that uses ${APP_NAME}. The extension connects on its own.`}
       </p>
     </div>

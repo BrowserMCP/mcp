@@ -6,11 +6,15 @@
 import type { ElementHandle, Locator, Page, Request } from "playwright-core";
 
 import { hiddenTabs } from "@/commands/hidden-tabs";
-import { sleep, StepError } from "@/commands/output";
+import { isPageClosedError, sleep, StepError } from "@/commands/output";
 import { type Target, toLocator } from "@/commands/targets";
 
 /** How long locators wait for an element to appear */
 export const FIND_TIMEOUT_MS = 5000;
+/**
+ * How long an action on an element already found (`resolveOne`) may take: its CDP round trips, which a busy machine can hold up for seconds. Longer than `FIND_TIMEOUT_MS`, which is about the page, not the machine; the step's own limit still bounds it
+ */
+export const ACTION_TIMEOUT_MS = 15_000;
 /** How long pointer actions wait for an element to become visible, enabled and uncovered */
 const ACTIONABLE_TIMEOUT_MS = 3000;
 
@@ -36,6 +40,8 @@ export async function resolveOne(
     try {
       count = await locator.count();
     } catch (error) {
+      // The page went away, not the target's fault
+      if (isPageClosedError(error)) throw error;
       throw new StepError(
         `${target.source} isn't a valid target: ${String((error as Error).message).split("\n")[0]}. Use a ref, a locator such as getByRole('button', { name: 'Submit' }), or a CSS selector`,
       );
@@ -202,13 +208,17 @@ export async function click(
 ) {
   await hiddenTabs.ensureVisible(page);
   await moveCursor(page, target.x, target.y);
-  await target.handle.click({ ...options, force: true, timeout: 5000 });
+  await target.handle.click({
+    ...options,
+    force: true,
+    timeout: ACTION_TIMEOUT_MS,
+  });
 }
 
 export async function hover(page: Page, target: PointerTarget) {
   await hiddenTabs.ensureVisible(page);
   await moveCursor(page, target.x, target.y);
-  await target.handle.hover({ force: true, timeout: 5000 });
+  await target.handle.hover({ force: true, timeout: ACTION_TIMEOUT_MS });
 }
 
 export async function drag(page: Page, from: PointerTarget, to: PointerTarget) {

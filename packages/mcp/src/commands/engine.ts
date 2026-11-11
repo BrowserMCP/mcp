@@ -21,6 +21,7 @@ import { hiddenTabs } from "@/commands/hidden-tabs";
 import { INSTRUCTIONS } from "@/commands/instructions";
 import {
   errorMessage,
+  isPageClosedError,
   MAX_IMAGES,
   RESPONSE_CAP,
   sleep,
@@ -47,6 +48,10 @@ import type {
   CreateCommandEngine,
   SessionInfo,
 } from "@/contracts";
+import {
+  ambiguousBrowserMessage,
+  noSuchBrowserMessage,
+} from "@/relay/messages";
 import { browserTool } from "@/tools/browser";
 
 const DEFAULT_IDLE_RELEASE_MS = 10 * 60_000;
@@ -58,6 +63,8 @@ const NO_TAB_MESSAGE =
 
 /** How long a step may run before it's abandoned and its tab freed: `--timeout` (or the command's own time) plus headroom, and at least `defaultMs`. Tests lower them */
 export const stepLimits = { defaultMs: 30_000, headroomMs: 5_000 };
+/** How long a step waits for the extension to report the tabs its page opened. Tests change it */
+export const openedTabWait = { ms: 5_000 };
 /** Room kept in the response for status lines, the trailer and notices */
 const STATUS_RESERVE = 2_000;
 /** Echoed command lines are cut to this */
@@ -75,6 +82,10 @@ type Session = SessionInfo & {
   lastCall: number;
   /** Tabs pages opened during the running step, noted on its line */
   openedTabs: { tabId: number; url: string }[];
+  /** The browser (`BrowserSummary.id`) new tabs open in: the one of the tab the session last selected or opened, or the one it chose with `browser use` since */
+  browser: string | null;
+  /** `browser` was chosen with `browser use`: while it's away, new tabs fail rather than open elsewhere */
+  browserChosen: boolean;
 };
 
 export const createCommandEngine: CreateCommandEngine = ({
@@ -102,6 +113,8 @@ class Engine implements CommandEngine {
     });
     backend.on("state", () => this.pruneClosedTabs());
     backend.on("tabOpened", ({ tabId, openerTabId, url }) => {
+      const opener = this.states.get(openerTabId);
+      if (opener) opener.reportedOpens++;
       const owner =
         [...this.sessions.values()].find((s) => s.current === openerTabId) ??
         [...this.sessions.values()].find((s) => s.tabs.has(openerTabId));
@@ -148,6 +161,8 @@ class Engine implements CommandEngine {
       opened: new Set(),
       lastCall: Date.now(),
       openedTabs: [],
+      browser: null,
+      browserChosen: false,
     });
   }
 
@@ -252,11 +267,11 @@ class Engine implements CommandEngine {
     this.takePending(session);
     const onlyHelp = lines.every((line) => line.def.name === "help");
     if (!onlyHelp) {
-      await this.backend.whenReady?.();
+      await this.backend.whenReady?.(session.current);
       const unavailable = this.backend.unavailableReason();
       if (unavailable) return errorResult(unavailable);
       if (this.backend.paused) return errorResult(PAUSED_MESSAGE);
-      this.backend.noteActivity(session.app.id);
+      this.backend.noteActivity(session.app.id, this.tabBrowser(session));
     }
     session.openedTabs = [];
     const out: string[] = [];
@@ -309,12 +324,22 @@ class Engine implements CommandEngine {
         }
         const before = tabId === null ? null : await this.quickInfo(tabId);
         const errorsBefore = state?.errorCount ?? 0;
+        // Windows each tab opened that weren't reported before this step, so the step waits only for its own
+        const unreportedBefore = new Map(
+          [...this.states.values()].map((s) => [s, s.unreportedOpens]),
+        );
         const ctx = this.stepContext(session, args, printed, notes, images);
         const dialog = await this.runStep(
           session,
           tabId,
           ctx,
-          def.run,
+          def.reads
+            ? (c) =>
+                this.readAgainIfReattached(session, c, def, () => {
+                  printed.length = 0;
+                  notes.length = 0;
+                })
+            : def.run,
           stepTimeout(def, args),
         );
         tabId = this.currentTab(session);
@@ -333,10 +358,16 @@ class Engine implements CommandEngine {
             url: after.url,
           };
         }
+        const afterState = tabId === null ? undefined : this.states.get(tabId);
+        if (afterState) {
+          await this.waitForOpenedTabs(
+            afterState,
+            unreportedBefore.get(afterState) ?? 0,
+          );
+        }
         for (const opened of session.openedTabs.splice(0)) {
           notes.push(await this.openedNote(opened.tabId, opened.url));
         }
-        const afterState = tabId === null ? undefined : this.states.get(tabId);
         state ??= afterState;
         if (afterState && afterState.page === state?.page) {
           const fresh = afterState.errorCount - errorsBefore;
@@ -489,7 +520,10 @@ class Engine implements CommandEngine {
       currentTabId: () => this.currentTab(session),
       pageForGoto: async () => {
         if (this.currentTab(session) === null) {
-          const tabId = await this.backend.createTab({ app: session.app });
+          const tabId = await this.backend.createTab({
+            app: session.app,
+            browser: this.tabBrowser(session),
+          });
           this.adopt(session, tabId, true);
         }
         return (await this.tabState(session)).page;
@@ -506,8 +540,13 @@ class Engine implements CommandEngine {
       },
       tabs: {
         list: () => this.listTabs(session),
-        create: async (url) => {
-          const tabId = await this.backend.createTab({ app: session.app });
+        create: async (url, browser) => {
+          const tabId = await this.backend.createTab({
+            app: session.app,
+            browser: browser
+              ? this.findBrowser(browser).id
+              : this.tabBrowser(session),
+          });
           this.adopt(session, tabId, true);
           if (url) {
             const page = (await this.tabState(session)).page;
@@ -515,6 +554,15 @@ class Engine implements CommandEngine {
             await waitForLoad(page);
           }
           return tabId;
+        },
+        browserOf: (tabId) => {
+          const browser = this.backend
+            .tabs()
+            .find((tab) => tab.tabId === tabId)?.browser;
+          return this.severalBrowsers()
+            ? this.backend.browsers().find((other) => other.id === browser)
+                ?.label
+            : undefined;
         },
         select: async (tabId) => {
           const tab = await this.backend.findTab(tabId);
@@ -539,6 +587,16 @@ class Engine implements CommandEngine {
           for (const other of this.sessions.values()) this.forget(other, id);
         },
       },
+      browsers: {
+        several: () => this.severalBrowsers(),
+        list: () => this.listBrowsers(session),
+        use: (name) => {
+          const browser = this.findBrowser(name);
+          session.browser = browser.id;
+          session.browserChosen = true;
+          return browser.label;
+        },
+      },
     };
   }
 
@@ -546,11 +604,7 @@ class Engine implements CommandEngine {
 
   /** The session's tab, unless it closed. Shared and dragged-in tabs become current only at a call's start (`takePending`), so a batch never switches tabs midway */
   private currentTab(session: Session): number | null {
-    if (
-      session.current !== null &&
-      this.tabsKnown() &&
-      !this.backend.tabs().some((tab) => tab.tabId === session.current)
-    ) {
+    if (session.current !== null && this.backend.tabClosed(session.current)) {
       this.forget(session, session.current);
     }
     return session.current;
@@ -568,21 +622,78 @@ class Engine implements CommandEngine {
     const tabId = session.pending;
     session.pending = null;
     if (tabId === null) return;
-    if (this.tabsKnown() && !this.backend.tabs().some((t) => t.tabId === tabId))
-      return;
+    if (this.backend.tabClosed(tabId)) return;
     session.tabs.add(tabId);
-    session.current = tabId;
-  }
-
-  /** Whether `backend.tabs()` lists the user's tabs. It's empty while the extension is away (e.g. its service worker restarting) or waits for **Allow**, which doesn't mean the tabs closed */
-  private tabsKnown() {
-    return this.backend.unavailableReason() === null;
+    this.adopt(session, tabId, false);
   }
 
   private adopt(session: Session, tabId: number, opened: boolean) {
     session.tabs.add(tabId);
     if (opened) session.opened.add(tabId);
     session.current = tabId;
+    // New tabs open in the browser of the tab the session works in now
+    const browser = this.backend
+      .tabs()
+      .find((tab) => tab.tabId === tabId)?.browser;
+    if (browser) {
+      session.browser = browser;
+      session.browserChosen = false;
+    }
+  }
+
+  // --- Browsers ---
+
+  /** Whether several browsers are connected: only then do outputs name them */
+  private severalBrowsers() {
+    return this.backend.browsers().filter((b) => b.connected).length > 1;
+  }
+
+  /** The browser the session's new tabs open in (see `Session.browser`), or undefined for the backend's default: the usable browser focused last. One the session chose with `browser use` counts even while it's away, paused or waits for **Allow** (the call then says so); the browser of its tab only while it's usable */
+  private tabBrowser(session: Session): string | undefined {
+    if (!session.browser) return undefined;
+    const browser = this.backend
+      .browsers()
+      .find((other) => other.id === session.browser);
+    if (!browser) return undefined;
+    return browser.usable || session.browserChosen ? browser.id : undefined;
+  }
+
+  /** A browser by its ID or label (ignoring case) */
+  private findBrowser(name: string) {
+    const browsers = this.backend.browsers();
+    const byId = browsers.find((browser) => browser.id === name);
+    if (byId) return byId;
+    const matches = browsers.filter(
+      (browser) => browser.label.toLowerCase() === name.toLowerCase(),
+    );
+    const connected = matches.filter((browser) => browser.connected);
+    const found = connected.length ? connected : matches;
+    if (found.length === 1) return found[0]!;
+    if (!found.length) throw new StepError(noSuchBrowserMessage(name));
+    throw new StepError(
+      ambiguousBrowserMessage(
+        name,
+        found.map((browser) => browser.id),
+      ),
+    );
+  }
+
+  /** `browser list`: `* b1 Work — 4 tabs`, * marking where the session's new tabs open */
+  private listBrowsers(session: Session): string {
+    const browsers = this.backend.browsers();
+    if (!browsers.length) return "(no browsers)";
+    const target =
+      this.tabBrowser(session) ?? browsers.find((b) => b.default)?.id;
+    return browsers
+      .map((browser) => {
+        const status = !browser.connected
+          ? "disconnected"
+          : browser.pairing === "pending"
+            ? "waiting for Allow in its popup"
+            : `${browser.tabs} tab${browser.tabs === 1 ? "" : "s"}${browser.paused ? ", paused" : ""}`;
+        return `${browser.id === target ? "*" : " "} ${browser.id} ${JSON.stringify(browser.label)} — ${status}`;
+      })
+      .join("\n");
   }
 
   private forget(session: Session, tabId: number) {
@@ -607,7 +718,7 @@ class Engine implements CommandEngine {
       this.states.set(tabId, state);
       try {
         state.internalCdp = await this.backend.cdpSession(tabId);
-        await state.watchDialogClose(state.internalCdp);
+        await state.watchCdp(state.internalCdp);
       } catch (error) {
         this.log("no internal CDP session", tabId, error);
       }
@@ -622,37 +733,45 @@ class Engine implements CommandEngine {
     const hidden = this.backend.restriction?.()?.hiddenTabs ?? 0;
     if (!tabs.length) return hidden ? hiddenTabsMessage(hidden) : "(no tabs)";
     const current = this.currentTab(session);
+    // With several browsers, each tab names its browser
+    const labels = this.severalBrowsers()
+      ? new Map(this.backend.browsers().map((b) => [b.id, b.label]))
+      : null;
     // The extension reports titles and URLs a moment after they change, so tabs agents use show their page's own
     const live = await Promise.all(
       tabs.map((tab) => this.quickInfo(tab.tabId)),
     );
-    return tabs
-      .map((reported, i) => {
-        const tab = {
-          ...reported,
-          ...live[i],
-          title: live[i]?.title || reported.title,
-        };
-        const marks = [
-          session.tabs.has(tab.tabId) ? "yours" : undefined,
-          tab.active ? "active" : undefined,
-        ].filter(Boolean);
-        return `${tab.tabId === current ? "*" : " "} ${tab.tabId} ${JSON.stringify(truncate(tab.title, 80))} — ${truncate(tab.url, 120)}${marks.length ? ` (${marks.join(", ")})` : ""}`;
-      })
-      .join("\n")
-      .concat(hidden ? `\n${moreHiddenTabsNote(hidden)}` : "");
+    const lines = tabs.map((reported, i) => {
+      const tab = {
+        ...reported,
+        ...live[i],
+        title: live[i]?.title || reported.title,
+      };
+      const marks = [
+        session.tabs.has(tab.tabId) ? "yours" : undefined,
+        tab.active ? "active" : undefined,
+      ].filter(Boolean);
+      const browser = labels ? ` [${labels.get(tab.browser)}]` : "";
+      return `${tab.tabId === current ? "*" : " "} ${tab.tabId}${browser} ${JSON.stringify(truncate(tab.title, 80))} — ${truncate(tab.url, 120)}${marks.length ? ` (${marks.join(", ")})` : ""}`;
+    });
+    if (labels) {
+      const target = this.tabBrowser(session);
+      lines.push(
+        `Several browsers are connected${target ? `; your new tabs open in ${labels.get(target)}` : ""}. \`browser list\`, \`browser use "<name>"\` and \`tab new --browser "<name>"\` choose where`,
+      );
+    }
+    if (hidden) lines.push(moreHiddenTabsNote(hidden));
+    return lines.join("\n");
   }
 
   private pruneClosedTabs() {
-    if (!this.tabsKnown()) return;
-    const open = new Set(this.backend.tabs().map((tab) => tab.tabId));
     for (const session of this.sessions.values()) {
       for (const tabId of session.tabs) {
-        if (!open.has(tabId)) this.forget(session, tabId);
+        if (this.backend.tabClosed(tabId)) this.forget(session, tabId);
       }
     }
     for (const tabId of this.states.keys()) {
-      if (!open.has(tabId)) this.dropState(tabId);
+      if (this.backend.tabClosed(tabId)) this.dropState(tabId);
     }
   }
 
@@ -708,6 +827,42 @@ class Engine implements CommandEngine {
     }
     const tab = this.backend.tabs().find((t) => t.tabId === tabId);
     return tab ? { tabId, url: tab.url, title: tab.title } : null;
+  }
+
+  /**
+   * Runs a step that only reads the page, once more if its Page went away while the tab stayed claimed: the debugger detached and the bridge re-attaches it as a new Page (a navigation that swapped the renderer, another extension's frame), so the tab is fine. A step that acts isn't repeated, since it may have acted already
+   */
+  private async readAgainIfReattached(
+    session: Session,
+    ctx: StepContext,
+    def: CommandDef,
+    clearOutput: () => void,
+  ) {
+    try {
+      await def.run(ctx);
+    } catch (error) {
+      const tabId = this.currentTab(session);
+      if (
+        !isPageClosedError(error) ||
+        tabId === null ||
+        !this.backend.isClaimed(tabId)
+      ) {
+        throw error;
+      }
+      this.log("reading again after a re-attach", def.name, tabId);
+      clearOutput();
+      await def.run(ctx);
+    }
+  }
+
+  /**
+   * After a step whose page opened windows, waits (a while at most) for the extension's `tabOpened` reports, which come a moment later (it may first move a popup into a normal window and group the tab), so the step's line names the tabs it opened. A window the extension doesn't report (a URL agents may not use) only costs the wait
+   */
+  private async waitForOpenedTabs(state: TabState, unreportedBefore: number) {
+    const deadline = Date.now() + openedTabWait.ms;
+    while (state.unreportedOpens > unreportedBefore && Date.now() < deadline) {
+      await sleep(25);
+    }
   }
 
   /** `opened tab 4 "Checkout"`, waiting briefly for the new tab's title */

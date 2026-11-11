@@ -97,6 +97,15 @@ async function run(daemonClient: DaemonClient, commands: string) {
   return text;
 }
 
+function isRunning(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function daemonPid(daemonClient: DaemonClient) {
   const pid = Number(await run(daemonClient, "pid"));
   pids.add(pid);
@@ -145,10 +154,12 @@ describe("DaemonClient", () => {
     const thin = client({ idleMs: 300 });
     const first = await daemonPid(thin);
     thin.close();
-    const deadline = Date.now() + 5000;
-    while ((await fetchStatus(port, 200)) && Date.now() < deadline) {
+    // Waits for the process to exit rather than for /status to stop answering, which a loaded machine's slow answer looks like
+    const deadline = Date.now() + 15_000;
+    while (isRunning(first) && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    expect(isRunning(first)).toBe(false);
     expect(await fetchStatus(port)).toBeNull();
     expect(readDaemonInfo(daemonInfoPath(home, port))).toBeNull();
 

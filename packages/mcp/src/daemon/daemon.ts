@@ -106,7 +106,6 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     daemonVersion: options.version,
     identity,
     log,
-    hasSessions: () => sessions.size > 0,
   });
   const engine = options.createEngine({ backend, log });
   let idleTimer: NodeJS.Timeout | undefined;
@@ -227,7 +226,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     log,
     onRejectedExtension: (id) => backend.noteRejectedExtension(id),
     onExtension: (ws, port) => void backend.acceptExtension(ws, port),
-    onCdp: (ws) => backend.acceptCdp(ws),
+    onCdp: (ws, browserId) => backend.acceptCdp(ws, browserId),
     onClient,
     onShutdown: async () => {
       const deadline = Date.now() + SHUTDOWN_BUSY_WAIT_MS;

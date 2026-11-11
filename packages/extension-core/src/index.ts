@@ -13,4 +13,5 @@ export {
   handleBrowserControlMessages,
   requirePopupSender,
 } from "./messages";
+export * from "./browser-label";
 export * from "./types";

@@ -32,7 +32,7 @@ The Chrome Web Store version updates itself. A build you load yourself doesn't: 
    pnpm build
    ```
 
-2. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick `apps/extension/.output/chrome-mv3`. It's called "Browser MCP (self-built)". If the Chrome Web Store's Browser MCP is installed in the same profile, turn it off, since only one of them can use the server at a time.
+2. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick `apps/extension/.output/chrome-mv3`. It's called "Browser MCP (self-built)". If the Chrome Web Store's Browser MCP is installed in the same profile, turn it off, or both would connect to the server as two browsers. Other Chrome profiles with Browser MCP connect too: agents can use tabs in each.
 3. In your AI app's MCP config, run the server you built instead of the one on npm:
 
    ```json
@@ -68,7 +68,7 @@ Then click the reload button on "Browser MCP (self-built)" in `chrome://extensio
 
 - `pnpm lint`, `pnpm format` (`pnpm format:fix` fixes it): Oxlint and Oxfmt.
 - `pnpm typecheck`, `pnpm test`: TypeScript and the unit tests (Vitest) of every package. The server's tests run Playwright's Chromium: install it once with `pnpm --filter @browsermcp/mcp exec playwright-core install chromium`.
-- `pnpm smoke`: builds the extension in development mode and the server, loads the extension in headless Chromium and drives it through the server as an AI app would, on random ports and a temporary `BROWSER_MCP_HOME`, so it never touches your own Browser MCP. Screenshots go to `apps/extension/.output/smoke/`.
+- `pnpm smoke`: builds the extension in development mode and the server, loads the extension in headless Chromium and drives it through the server as an AI app would, on random ports and a temporary `BROWSER_MCP_HOME`, so it never touches your own Browser MCP. Screenshots and the daemons' logs go to `apps/extension/.output/smoke/` (`--out <dir>` elsewhere, e.g. for runs at once); a failed section names the step or check that failed, its error and the last call's output, and screenshots the open pages.
 - `pnpm --filter @browsermcp/extension build:dev`: a development build (`apps/extension/.output/chrome-mv3-dev`).
 
 ## Contributing and security

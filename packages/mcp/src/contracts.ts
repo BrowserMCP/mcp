@@ -97,31 +97,64 @@ export type RpcResponse =
 
 // --- Command engine ↔ relay (in the daemon) ---
 
+/** A tab as the backend reports it: `tabId` is the backend's public ID, unique across browsers (Chrome's own tab IDs mean something only within one browser), and `browser` the ID of the browser it's in (`BrowserSummary.id`) */
+export type BackendTab = ExposedTab & { browser: string };
+
+/** A browser (Chrome profile) the daemon knows: connected now, or connected earlier while it ran (it keeps its tabs' IDs when it reconnects) */
+export type BrowserSummary = {
+  /** The daemon's ID for it, e.g. `b2`, stable while the daemon runs */
+  id: string;
+  /** The name the user gave the profile in the popup, else the daemon's (`Chrome`, `Chrome 2`) */
+  label: string;
+  connected: boolean;
+  /** `pending` while it waits for **Allow** */
+  pairing: "paired" | "pending";
+  paused: boolean;
+  /** How many tabs it reports */
+  tabs: number;
+  /** When one of its windows last gained focus (ms since the epoch), if it said */
+  lastFocusedAt?: number;
+  /** When it last connected (ms since the epoch) */
+  connectedAt: number;
+  /** Connected, paired and not paused */
+  usable: boolean;
+  /** Where `createTab()` opens tabs when no browser is named: the usable browser focused last, else the one connected last */
+  default: boolean;
+};
+
 /** What the command engine needs from the browser, implemented by the relay (extension connection + CDP bridge + Playwright `connectOverCDP`), and in tests by a launched Chromium */
 export interface BrowserBackend {
   /** Whether an extension is connected (and speaks our protocol) */
   readonly connected: boolean;
   /** A message for the model when no usable extension is connected, else null: `NO_EXTENSION_MESSAGE`, `pairingRequiredMessage(code)` while the extension waits for **Allow**, another browser… */
   unavailableReason(): string | null;
-  /** Waits briefly for the extension when it's expected any moment: right after the daemon started or the extension disconnected (it reconnects within seconds), or right after it connected, until it reports its state. Resolves at once otherwise. Call it before `unavailableReason()` */
-  whenReady?(): Promise<void>;
-  /** The user pressed Stop (or Cancel on the debugging bar) */
+  /** Waits briefly for a browser when it's expected any moment: right after the daemon started or a browser disconnected (it reconnects within seconds), or right after one connected, until it reports its state. With `tabId`, for that tab's browser. Resolves at once otherwise. Call it before `unavailableReason()` */
+  whenReady?(tabId?: number | null): Promise<void>;
+  /** The user pressed Stop (or Cancel on the debugging bar) in every connected browser */
   readonly paused: boolean;
-  /** The tabs the extension reports */
-  tabs(): ExposedTab[];
-  /** The tab the extension reports with this ID, waiting briefly for one it doesn't list yet: it reports a new tab a moment after it appears */
-  findTab(tabId: number): Promise<ExposedTab | undefined>;
+  /** The browsers it knows, connected or not, in the order they first connected */
+  browsers(): BrowserSummary[];
+  /** The tabs the connected browsers report */
+  tabs(): BackendTab[];
+  /** The tab with this ID, waiting briefly for one its browser doesn't list yet: it reports a new tab a moment after it appears. Throws the message the model should see for a tab of a browser that's away */
+  findTab(tabId: number): Promise<BackendTab | undefined>;
+  /** Whether the tab is known to be closed: its browser is connected and paired and doesn't report it. False while its browser is away (e.g. its service worker restarting) or waits for **Allow**, which doesn't mean the tab closed */
+  tabClosed(tabId: number): boolean;
   /** When the user limited agents to the tabs they enable: how many other tabs are open that they may not use yet. `null` when every tab is available */
   restriction?(): { hiddenTabs: number } | null;
 
-  /** Opens a background tab in the app's group. Doesn't attach the debugger */
-  createTab(options: { url?: string; app: AppInfo }): Promise<number>;
+  /** Opens a background tab in the app's group, in `browser` (a `BrowserSummary.id`), or by default in the usable browser focused last. Doesn't attach the debugger */
+  createTab(options: {
+    url?: string;
+    app: AppInfo;
+    browser?: string;
+  }): Promise<number>;
   closeTab(tabId: number): Promise<void>;
   activateTab(tabId: number): Promise<void>;
   /** Puts a tab in the app's group, or out of any with `null` */
   groupTab(tabId: number, app: AppInfo | null): Promise<void>;
-  /** Reports which app acted last (the badge's color) */
-  noteActivity(appId: string): void;
+  /** Reports which app acted last (the badge's color), to `browser`, or by default to the browser `createTab()` would use */
+  noteActivity(appId: string, browser?: string): void;
 
   /**
    * Claims the tab: attaches the debugger (if needed), announces it to Playwright as a target, and returns its Page. Idempotent. Only claimed tabs are CDP targets (decision 6)
@@ -141,14 +174,14 @@ export interface BrowserBackend {
 
 export type BackendEvents = {
   /** The tab list or `paused` changed */
-  state: { tabs: ExposedTab[]; paused: boolean; pairing: "paired" | "pending" };
+  state: { tabs: BackendTab[]; paused: boolean; pairing: "paired" | "pending" };
   /** The user dragged a tab into an app's group, or out of it */
   tabAssigned: { tabId: number; appId: string | null };
   /** A page opened a tab */
   tabOpened: { tabId: number; openerTabId: number; url: string };
   /** A claimed tab was released by something other than `release()` (the tab closed, the debugger detached, the extension disconnected, Stop) */
   released: { tabId: number; reason: string };
-  /** The extension connected or disconnected */
+  /** A browser connected or disconnected: `connected` is whether any is connected now */
   connection: { connected: boolean };
 };
 

@@ -29,6 +29,8 @@ export type BrowserControlMessages = {
   enableTab: { input: { tabId: number }; output: void };
   /** Stops agents using the tab */
   disableTab: { input: { tabId: number }; output: void };
+  /** Names this browser profile for agents when several are connected (`ExtensionState.label`), or unsets the name with `null` or an empty one. Trimmed and capped (`normalizeBrowserLabel()`) */
+  setBrowserLabel: { input: { label: string | null }; output: void };
   /** Makes a tab active and focuses its window */
   switchToTab: { input: { tabId: number }; output: void };
 };
@@ -104,6 +106,7 @@ export function handleBrowserControlMessages(
       fromPopup(sender).setDefaultGrantMinutes(minutes),
     enableTab: ({ tabId }, sender) => fromPopup(sender).enableTab(tabId),
     disableTab: ({ tabId }, sender) => fromPopup(sender).disableTab(tabId),
+    setBrowserLabel: ({ label }, sender) => fromPopup(sender).setLabel(label),
     switchToTab: ({ tabId }, sender) => fromPopup(sender).switchToTab(tabId),
   };
 

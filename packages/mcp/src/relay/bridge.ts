@@ -100,6 +100,11 @@ export class CdpBridge {
     return this.targets.get(tabId)?.targetInfo.targetId;
   }
 
+  /** Resolves when the tab's current target goes away (at once if it has none): it was released, or it detached and is re-attaching as a new target */
+  whenGone(tabId: number): Promise<void> {
+    return this.targets.get(tabId)?.gone ?? Promise.resolve();
+  }
+
   /** Attaches the debugger (if needed) and announces the tab to the client. Idempotent */
   async claim(tabId: number): Promise<TargetInfo> {
     const reattaching = this.reattaching.get(tabId);

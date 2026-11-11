@@ -41,7 +41,7 @@ export async function startTestBackend(
     extensionIds: allowedExtensionIds(),
     log,
     onExtension: (ws, port) => void backend.acceptExtension(ws, port),
-    onCdp: (ws) => backend.acceptCdp(ws),
+    onCdp: (ws, browserId) => backend.acceptCdp(ws, browserId),
     onClient: (ws) => ws.close(),
     onShutdown: async () => void shutdown.requested++,
   });
