@@ -1,4 +1,4 @@
-import { browser } from "wxt/browser";
+import { type Browser, browser } from "wxt/browser";
 
 import type { AppInfo } from "@browsermcp/protocol";
 
@@ -9,6 +9,14 @@ import { TAB_GROUP_COLORS, type TabGroupColor } from "../types";
 const NO_GROUP = -1;
 
 let queue: Promise<unknown> = Promise.resolve();
+
+/** The group, or `null` when it's gone or the browser has no tab groups (Android Chromium browsers) */
+function getGroup(groupId: number): Promise<Browser.tabGroups.TabGroup | null> {
+  if (!browser.tabGroups) {
+    return Promise.resolve(null);
+  }
+  return browser.tabGroups.get(groupId).catch(() => null);
+}
 
 /**
  * Runs `update` on the app groups and saves them, one update at a time. Group changes the extension makes itself run inside it, so the `tabs.onUpdated` they cause (handled with this too) find the groups already saved and aren't mistaken for the user dragging a tab
@@ -84,7 +92,7 @@ async function findGroupInWindow(
 ): Promise<number | undefined> {
   let found: number | undefined;
   for (const groupId of app.groupIds) {
-    const group = await browser.tabGroups.get(groupId).catch(() => null);
+    const group = await getGroup(groupId);
     if (!group) {
       app.groupIds = app.groupIds.filter((id) => id !== groupId);
     } else if (group.windowId === windowId) {
@@ -95,39 +103,53 @@ async function findGroupInWindow(
 }
 
 /**
- * Puts the tab in the app's group in its window (creating the group, named after the app in the app's color), or takes it out of any app's group with `app: null`. Pinned tabs are only assigned: grouping a tab unpins it. Never attaches the debugger
+ * Assigns the tab to the app and puts it in the app's group in its window (creating the group, named after the app in the app's color), or takes it out of any app's group with `app: null`. Pinned tabs are only assigned: grouping a tab unpins it. The group is only how the user sees it: where the browser can't group tabs (Android Chromium browsers say "Tabs cannot be edited right now"), the tab is still assigned. Never attaches the debugger
  */
 export function groupTab(tabId: number, app: AppInfo | null): Promise<void> {
   return withAppGroups(async (groups) => {
     const tab = await browser.tabs.get(tabId);
-    if (!app) {
+    if (app) {
+      groups.tabApps[tabId] = app.id;
+    } else {
       delete groups.tabApps[tabId];
-      if (getAppIdForGroup(groups, tab.groupId)) {
-        await browser.tabs.ungroup(tabId);
-      }
-      return;
     }
-    const entry = ensureApp(groups, app);
-    groups.tabApps[tabId] = app.id;
-    if (tab.pinned) {
-      return;
-    }
-    const groupId = await findGroupInWindow(entry, tab.windowId);
-    if (groupId !== undefined) {
-      if (tab.groupId !== groupId) {
-        await browser.tabs.group({ tabIds: [tabId], groupId });
-      }
-      return;
-    }
-    const newGroupId = await browser.tabs.group({
-      tabIds: [tabId],
-      createProperties: { windowId: tab.windowId },
+    await updateGroup(groups, tab, app).catch((error: unknown) => {
+      console.warn("Couldn't group a tab", error);
     });
-    entry.groupIds.push(newGroupId);
-    await browser.tabGroups.update(newGroupId, {
-      title: entry.name,
-      color: entry.color,
-    });
+  });
+}
+
+async function updateGroup(
+  groups: AppGroups,
+  tab: Browser.tabs.Tab,
+  app: AppInfo | null,
+): Promise<void> {
+  const tabId = tab.id!;
+  if (!app) {
+    if (getAppIdForGroup(groups, tab.groupId)) {
+      await browser.tabs.ungroup(tabId);
+    }
+    return;
+  }
+  const entry = ensureApp(groups, app);
+  if (tab.pinned || !browser.tabGroups) {
+    return;
+  }
+  const groupId = await findGroupInWindow(entry, tab.windowId);
+  if (groupId !== undefined) {
+    if (tab.groupId !== groupId) {
+      await browser.tabs.group({ tabIds: [tabId], groupId });
+    }
+    return;
+  }
+  const newGroupId = await browser.tabs.group({
+    tabIds: [tabId],
+    createProperties: { windowId: tab.windowId },
+  });
+  entry.groupIds.push(newGroupId);
+  await browser.tabGroups.update(newGroupId, {
+    title: entry.name,
+    color: entry.color,
   });
 }
 
@@ -182,12 +204,7 @@ export function reconcileAppGroups(): Promise<void> {
     const tabIds = new Set(tabs.map((tab) => tab.id));
     for (const app of Object.values(groups.apps)) {
       const existing = await Promise.all(
-        app.groupIds.map((id) =>
-          browser.tabGroups.get(id).then(
-            () => id,
-            () => null,
-          ),
-        ),
+        app.groupIds.map(async (id) => ((await getGroup(id)) ? id : null)),
       );
       app.groupIds = existing.filter((id) => id !== null);
     }
@@ -211,7 +228,7 @@ export function reconcileAppGroups(): Promise<void> {
 }
 
 /**
- * Opens an agent's new tab, decided only here. As the hidden-tab spike found (`@browsermcp/mcp`'s `spikes/hidden-tabs/RESULTS.md`), it's a background tab (never active, and no window is focused) in the window that has the app's group (never an incognito one), else the user's last focused normal window; the daemon's focus emulation makes it render. Only when there's no normal window does it open one, minimized and unfocused, so nothing comes up over the user's windows
+ * Opens an agent's new tab, decided only here. As the hidden-tab spike found (`@browsermcp/mcp`'s `spikes/hidden-tabs/RESULTS.md`), it's a background tab (never active, and no window is focused) in the window that has the app's group (never an incognito one), else the user's last focused normal window; the daemon's focus emulation makes it render. Only when there's no normal window (none listed, and no tab in one) does it open one, minimized and unfocused, so nothing comes up over the user's windows
  */
 export async function openAgentTab(
   url: string,
@@ -220,7 +237,7 @@ export async function openAgentTab(
   const groups = await appGroupsItem.getValue();
   let windowId: number | undefined;
   for (const groupId of groups.apps[appId]?.groupIds ?? []) {
-    const group = await browser.tabGroups.get(groupId).catch(() => null);
+    const group = await getGroup(groupId);
     if (!group) {
       continue;
     }
@@ -232,14 +249,21 @@ export async function openAgentTab(
     }
   }
   if (windowId === undefined) {
-    const windows = await browser.windows.getAll({ windowTypes: ["normal"] });
-    const lastFocused = await browser.windows
-      .getLastFocused({ windowTypes: ["normal"] })
-      .catch(() => null);
+    const [windows, lastFocused] = await Promise.all([
+      browser.windows.getAll({ windowTypes: ["normal"] }).catch(() => []),
+      browser.windows
+        .getLastFocused({ windowTypes: ["normal"] })
+        .catch(() => null),
+    ]);
     windowId =
       lastFocused && !lastFocused.incognito
         ? lastFocused.id
         : windows.find((window) => !window.incognito)?.id;
+  }
+  if (windowId === undefined) {
+    // Android Chromium browsers may not list their window, but their tabs say which it is
+    const tabs = await browser.tabs.query({ windowType: "normal" });
+    windowId = tabs.find((tab) => !tab.incognito)?.windowId;
   }
   if (windowId === undefined) {
     const window = await browser.windows.create({

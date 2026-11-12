@@ -173,6 +173,7 @@ export function installFakeChrome() {
         .filter(
           (tab) =>
             (query.active === undefined || tab.active === query.active) &&
+            (query.windowId === undefined || tab.windowId === query.windowId) &&
             (query.windowType === undefined ||
               windows.get(tab.windowId)?.type === query.windowType),
         )
@@ -306,6 +307,33 @@ export function installFakeChrome() {
       };
       windows.set(window.id, window);
       return window.id;
+    },
+    /**
+     * Behaves like the Android Chromium browsers of BrowserMCP/mcp#223 (Kiwi, Cromite): `tabs.query()` with `windowType: "normal"` finds the tabs, but `windows.*` can't look the window up, and tabs can't be grouped
+     */
+    simulateAndroid() {
+      const noWindow = async () => {
+        throw new Error("No window with id: 1.");
+      };
+      Object.assign(fakeBrowser.windows, {
+        get: noWindow,
+        getAll: async () => [],
+        getLastFocused: noWindow,
+        update: noWindow,
+        create: async () => {
+          throw new Error("Windows can't be created");
+        },
+      });
+      const notEditable = async () => {
+        throw new Error(
+          "Tabs cannot be edited right now (user may be dragging a tab).",
+        );
+      };
+      Object.assign(fakeBrowser.tabs, {
+        group: notEditable,
+        ungroup: notEditable,
+        move: notEditable,
+      });
     },
     /** The user drags a tab into a group, or out of any group with `-1` */
     dragTab: (tabId: number, groupId: number) => setGroup(tabId, groupId),

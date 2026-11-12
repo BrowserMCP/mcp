@@ -925,6 +925,58 @@ describe("what the daemon can't reach through an attached tab", () => {
   });
 });
 
+describe("Android Chromium browsers (BrowserMCP/mcp#223)", () => {
+  it("uses tabs whose window the browser can't look up", async () => {
+    chrome.addTab({ id: 1, active: true });
+    chrome.simulateAndroid();
+    const { ws } = await startPaired(await createDaemonKey());
+
+    for (const method of ["activateTab", "attach"] as const) {
+      expect(
+        (await request(ws, { method, params: { tabId: 1 } })).error,
+      ).toBeUndefined();
+    }
+    expect(chrome.attached.has(1)).toBe(true);
+  });
+
+  it("opens, assigns and closes agents' tabs where tabs can't be grouped", async () => {
+    chrome.addTab({ id: 1, active: true });
+    chrome.simulateAndroid();
+    const { ws } = await startPaired(await createDaemonKey());
+    const app = { id: "claude-code", name: "Claude Code" };
+
+    const created = await request(ws, {
+      method: "createTab",
+      params: { url: "https://a.example/", app },
+    });
+    expect(created.error).toBeUndefined();
+    const { tabId } = created.result as { tabId: number };
+    // One new tab, in the window the user's tabs are in, and none left behind
+    expect([...chrome.tabs.keys()]).toEqual([1, tabId]);
+    expect(chrome.tabs.get(tabId)).toMatchObject({ windowId: 1, groupId: -1 });
+    await vi.waitFor(async () =>
+      expect(
+        (await latestState(ws)).tabs.find((tab) => tab.tabId === tabId)?.appId,
+      ).toBe("claude-code"),
+    );
+
+    expect(
+      (await request(ws, { method: "groupTab", params: { tabId: 1, app } }))
+        .error,
+    ).toBeUndefined();
+    await vi.waitFor(async () =>
+      expect(
+        (await latestState(ws)).tabs.find((tab) => tab.tabId === 1)?.appId,
+      ).toBe("claude-code"),
+    );
+
+    expect(
+      (await request(ws, { method: "closeTab", params: { tabId } })).error,
+    ).toBeUndefined();
+    expect(chrome.tabs.has(tabId)).toBe(false);
+  });
+});
+
 describe("tab groups", () => {
   it("opens agents' tabs in the background in a named group per app, each app in its own color", async () => {
     chrome.addTab({ id: 1, active: true });

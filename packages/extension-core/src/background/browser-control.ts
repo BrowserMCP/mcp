@@ -210,7 +210,10 @@ export class BrowserControl {
       addListener(browser.tabs.onReplaced, onTabsChanged),
       addListener(browser.tabs.onAttached, onTabsChanged),
       addListener(browser.tabs.onDetached, onTabsChanged),
-      addListener(browser.tabGroups.onRemoved, onGroupRemoved),
+      // Android Chromium browsers may have no tab groups
+      ...(browser.tabGroups
+        ? [addListener(browser.tabGroups.onRemoved, onGroupRemoved)]
+        : []),
       addListener(
         browser.webNavigation.onCreatedNavigationTarget,
         onCreatedNavigationTarget,
@@ -379,13 +382,13 @@ export class BrowserControl {
     if (!tab) {
       throw new Error(`Tab ${tabId} doesn't exist`);
     }
-    const [rules, window] = await Promise.all([
+    const [rules, normalTabs] = await Promise.all([
       getExposureRules(),
-      browser.windows.get(tab.windowId).catch(() => null),
+      browser.tabs.query({ windowId: tab.windowId, windowType: "normal" }),
     ]);
     if (isExposedTab(tab, rules)) {
-      // Only normal windows' tabs are reported; the debugger can't attach in popups
-      if (window?.type !== "normal") {
+      // Only normal windows' tabs are reported (`getState()`), and the debugger can't attach in popups. Asked of `tabs.query()` as `getState()` does, not `windows.get()`, which Android Chromium browsers (Kiwi, Cromite) can't answer, though their tabs are in a normal window
+      if (!normalTabs.some((normal) => normal.id === tabId)) {
         throw new Error(
           `Agents can't use tab ${tabId}: it isn't in a normal window`,
         );
@@ -816,10 +819,15 @@ async function moveIntoWindow(tabId: number, windowId: number): Promise<void> {
   }
 }
 
+/** Activates the tab and focuses its window, where the browser can: Android Chromium browsers have one window, which `windows.update()` may refuse */
 async function focusTab(tab: Browser.tabs.Tab): Promise<void> {
   await Promise.all([
     browser.tabs.update(tab.id!, { active: true }),
-    browser.windows.update(tab.windowId, { focused: true }),
+    browser.windows
+      .update(tab.windowId, { focused: true })
+      .catch((error: unknown) => {
+        console.warn("Couldn't focus a window", error);
+      }),
   ]);
 }
 
