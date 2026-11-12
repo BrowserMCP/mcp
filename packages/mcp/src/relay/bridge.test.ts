@@ -320,6 +320,40 @@ describe("CdpBridge", () => {
     );
   });
 
+  it("asks the page for a frame while an Input command waits, until it's answered", async () => {
+    const sessionId = await claimAndConnect();
+    extension.auto = (method, params) =>
+      method === "cdp" && params.method === "Input.dispatchMouseEvent"
+        ? "manual"
+        : {};
+    const nudges = () =>
+      extension
+        .cdpSent("Runtime.evaluate")
+        .filter((sent) =>
+          String(
+            (sent.params.params as { expression?: string })?.expression,
+          ).includes("requestAnimationFrame"),
+        );
+    const move = client.command(
+      "Input.dispatchMouseEvent",
+      { type: "mouseMoved", x: 1, y: 1 },
+      sessionId,
+    );
+    await vi.waitUntil(() => nudges().length >= 2, { timeout: 2000 });
+    expect(nudges()[0]!.params).toMatchObject({ tabId: 1 });
+    extension.cdpSent("Input.dispatchMouseEvent")[0]!.answer({});
+    await move;
+    const count = nudges().length;
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(nudges()).toHaveLength(count);
+
+    // A command answered at once asks for nothing
+    extension.auto = () => ({});
+    await client.command("Input.insertText", { text: "a" }, sessionId);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(nudges()).toHaveLength(count);
+  });
+
   it("lets the detach arrive before a command that failed with 'Detached while handling command'", async () => {
     const sessionId = await claimAndConnect();
     extension.auto = () => "manual";

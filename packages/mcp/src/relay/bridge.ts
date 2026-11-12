@@ -65,6 +65,10 @@ const NO_REATTACH_REASONS = new Set([
   "not_allowed",
 ]);
 const DETACH_GRACE_MS = 1000;
+/**
+ * How long an `Input.*` command may wait before the bridge asks the page for an animation frame, and how often it asks again while it waits. Chrome holds a `mouseMoved` (Playwright sends one before every click and hover) until the page's next frame, and a page that changes nothing schedules none: in headless Chromium under load, a mouse move waited 1–8 s and longer, and every one was answered right after a frame was requested. `requestAnimationFrame(() => {})` does nothing else in the page
+ */
+const INPUT_FRAME_NUDGE_MS = 500;
 const DEFAULT_BROWSER_CONTEXT_ID = "browsermcp-default";
 
 /**
@@ -618,6 +622,29 @@ export class CdpBridge {
       return;
     }
     const key = message.sessionId ?? "";
+    if (message.method?.startsWith("Input.")) {
+      const nudge = setInterval(() => {
+        extension.send(
+          "cdp",
+          {
+            tabId: target.tabId,
+            sessionId: childSessionId,
+            method: "Runtime.evaluate",
+            params: { expression: "void requestAnimationFrame(() => {})" },
+          },
+          () => {},
+        );
+      }, INPUT_FRAME_NUDGE_MS);
+      const [originalReply, originalFail] = [reply, fail];
+      reply = (result) => {
+        clearInterval(nudge);
+        originalReply(result);
+      };
+      fail = (error) => {
+        clearInterval(nudge);
+        originalFail(error);
+      };
+    }
     const send = () =>
       extension.send(
         "cdp",
