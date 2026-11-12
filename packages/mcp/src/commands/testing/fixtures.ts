@@ -1,8 +1,16 @@
 /**
- * Fixture pages for the engine's tests, token budgets and the eval, served on 127.0.0.1 at a random port: a form like httpbin's, a list like Hacker News, a repo page like GitHub's, a login, a search with pages, a modal, a feed that loads more as it scrolls, and pages for scrolling, iframes, shadow DOM, dialogs, uploads, files to download, covered elements and popups.
+ * Fixture pages for the engine's tests, token budgets and the eval, served on 127.0.0.1 at a random port: a form like httpbin's, a list like Hacker News, a repo page like GitHub's, a login, a search with pages, a modal, a feed that loads more as it scrolls, and pages for scrolling, iframes, shadow DOM, dialogs, uploads, files to download, covered elements and popups; the eval's harder pages are in `hard-fixtures.ts`.
  */
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+
+import {
+  CITIES,
+  hardFixture,
+  INVOICE_AMOUNTS,
+  invoicePage,
+  SPA_ORDERS,
+} from "@/commands/testing/hard-fixtures";
 
 const page = (title: string, body: string, head = "") =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title>${head}</head><body>${body}</body></html>`;
@@ -238,10 +246,12 @@ export async function serveFixtures(): Promise<{
   origin: string;
   url: (path: string) => string;
   close: () => Promise<void>;
-  /** Form posts and logins received, newest last */
+  /** Form posts, logins and the hard pages' records (`/record`, with the `_ref` the page was given) received, newest last */
   posts: Record<string, string>[];
 }> {
   const posts: Record<string, string>[] = [];
+  /** One-time keys for the billing page's invoice tabs */
+  const invoiceKeys = new Set<string>();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const send = (
@@ -252,6 +262,11 @@ export async function serveFixtures(): Promise<{
       res.writeHead(status, { "content-type": type });
       res.end(body);
     };
+    if (req.method === "POST" && url.pathname === "/api/invoice-key") {
+      const key = Math.random().toString(36).slice(2);
+      invoiceKeys.add(key);
+      return send(200, JSON.stringify({ key }), "application/json");
+    }
     if (req.method === "POST") {
       let body = "";
       req.on("data", (chunk) => (body += chunk));
@@ -261,6 +276,14 @@ export async function serveFixtures(): Promise<{
         for (const [key, value] of form)
           entries[key] = entries[key] ? `${entries[key]},${value}` : value;
         posts.push(entries);
+        if (url.pathname === "/record") {
+          entries._ref = `R-${1000 + posts.length}`;
+          return send(
+            200,
+            JSON.stringify({ ok: true, ref: entries._ref }),
+            "application/json",
+          );
+        }
         if (url.pathname === "/login") {
           if (entries.username === "jane" && entries.password === "hunter2") {
             res.writeHead(303, { location: "/account" });
@@ -278,8 +301,8 @@ export async function serveFixtures(): Promise<{
         send(
           200,
           page(
-            "Order received",
-            `<h1>Thanks, order received</h1><pre>${escape(JSON.stringify(entries))}</pre>`,
+            entries.form === "signup" ? "Workspace created" : "Order received",
+            `<h1>${entries.form === "signup" ? "Your workspace is ready" : "Thanks, order received"}</h1><pre>${escape(JSON.stringify(entries))}</pre>`,
           ),
         );
       });
@@ -338,6 +361,32 @@ export async function serveFixtures(): Promise<{
           "content-length": String(26 * 1024 * 1024),
         });
         return res.write(Buffer.alloc(1024));
+      case "/api/orders":
+        return setTimeout(
+          () =>
+            send(
+              200,
+              JSON.stringify(
+                SPA_ORDERS.map(({ tracking: _, ...order }) => order),
+              ),
+              "application/json",
+            ),
+          1200,
+        );
+      case "/api/cities": {
+        const query = (url.searchParams.get("q") ?? "").toLowerCase();
+        return setTimeout(
+          () =>
+            send(
+              200,
+              JSON.stringify(
+                CITIES.filter((c) => c.name.toLowerCase().startsWith(query)),
+              ),
+              "application/json",
+            ),
+          600,
+        );
+      }
       case "/favicon.ico":
         res.writeHead(204);
         return res.end();
@@ -345,6 +394,34 @@ export async function serveFixtures(): Promise<{
         return send(200, "body{}", "text/css");
     }
     if (TESTS[url.pathname]) return send(200, TESTS[url.pathname]);
+    // The checkout frames a page from the other loopback name, a different site, so Chrome puts it in its own process
+    const [hostname, port] = (req.headers.host ?? "").split(":");
+    const otherOrigin = `http://${hostname === "localhost" ? "127.0.0.1" : "localhost"}:${port}`;
+    const hard = hardFixture(url.pathname, otherOrigin);
+    if (hard) return send(200, hard);
+    const invoice = /^\/invoice\/(INV-\d+)$/.exec(url.pathname);
+    if (invoice) {
+      const key = url.searchParams.get("key") ?? "";
+      const valid = invoiceKeys.delete(key);
+      return send(
+        200,
+        invoicePage(
+          invoice[1],
+          valid ? INVOICE_AMOUNTS[invoice[1]] : undefined,
+        ),
+      );
+    }
+    const order = /^\/api\/orders\/(\d+)$/.exec(url.pathname);
+    if (order) {
+      const found = SPA_ORDERS.find((o) => o.id === Number(order[1]));
+      return setTimeout(
+        () =>
+          found
+            ? send(200, JSON.stringify(found), "application/json")
+            : send(404, "{}", "application/json"),
+        2000,
+      );
+    }
     if (url.pathname.startsWith("/product/")) {
       const name = decodeURIComponent(url.pathname.slice(9));
       const product = PRODUCTS.find((p) => p.name === name);

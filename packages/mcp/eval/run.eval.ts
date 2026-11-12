@@ -26,12 +26,23 @@ const PRICES: Record<string, [number, number]> = {
 
 type Task = {
   name: string;
+  /** One of the harder tasks (`EVAL_TASKS=hard` runs only these) */
+  hard?: boolean;
+  /** Browser zoom for the task's own browser, e.g. 1.5 */
+  zoom?: number;
   prompt: (url: (path: string) => string, tag: string) => string;
   check: (answer: string, h: Harness, tag: string) => boolean;
 };
 
 const has = (answer: string, ...parts: string[]) =>
   parts.every((part) => answer.toLowerCase().includes(part.toLowerCase()));
+
+/** The record a hard page posted to `/record` for this run (its fields include the run's tag) */
+const recorded = (
+  h: Harness,
+  form: string,
+  match: (post: Record<string, string>) => boolean,
+) => h.fixtures.posts.filter((post) => post.form === form && match(post));
 
 const TASKS: Task[] = [
   {
@@ -93,6 +104,145 @@ const TASKS: Task[] = [
       `On ${url("/feed")}, which post is about a lighthouse keeper? Give its number.`,
     check: (answer) => has(answer, "37"),
   },
+  {
+    name: "signup",
+    hard: true,
+    prompt: (url, tag) =>
+      `Go to ${url("/signup")} and create a business workspace: full name "Jane Doe ${tag}", work email jane@acme.example, company "Acme ${tag}", 11-50 people, country Canada, province Ontario. Invite two teammates: Ann Lee (ann@acme.example) as an admin and Bob Ray (bob@acme.example) as a member. Accept the terms and create the workspace, then tell me the heading of the page you land on.`,
+    check: (answer, h, tag) => {
+      const rows = (post: Record<string, string>) => {
+        const names = (post.member_name ?? "").split(",");
+        const emails = (post.member_email ?? "").split(",");
+        const roles = (post.member_role ?? "").split(",");
+        // Empty rows (a blank one left over) don't count
+        return names
+          .map((name, i) => `${name}|${emails[i]}|${roles[i]}`)
+          .filter((row) => !row.startsWith("||"));
+      };
+      return (
+        h.fixtures.posts.some(
+          (post) =>
+            post.form === "signup" &&
+            post.fullname === `Jane Doe ${tag}` &&
+            post.email === "jane@acme.example" &&
+            post.type === "business" &&
+            post.company === `Acme ${tag}` &&
+            post.size === "11-50" &&
+            post.country === "Canada" &&
+            post.region === "Ontario" &&
+            post.terms === "on" &&
+            rows(post).sort().join(";") ===
+              "Ann Lee|ann@acme.example|admin;Bob Ray|bob@acme.example|member",
+        ) && has(answer, "workspace is ready")
+      );
+    },
+  },
+  {
+    name: "iframe",
+    hard: true,
+    prompt: (url, tag) =>
+      `On ${url("/checkout")}, pay with the card form: name on card "Jane Doe ${tag}", card number 4242 4242 4242 4242, expiry 12/28, CVC 123. Tell me the payment reference it shows.`,
+    check: (answer, h, tag) =>
+      recorded(
+        h,
+        "payment",
+        (post) =>
+          post.name === `Jane Doe ${tag}` &&
+          post.card === "4242 4242 4242 4242" &&
+          post.expiry === "12 / 28" &&
+          post.cvc === "123",
+      ).some((post) => has(answer, post._ref)),
+  },
+  {
+    name: "shadow",
+    hard: true,
+    prompt: (url, tag) =>
+      `On ${url("/settings")}, set the display name to "Jane ${tag}", turn email notifications on, turn the weekly digest off, choose the dark theme, and save.`,
+    check: (_answer, h, tag) =>
+      recorded(
+        h,
+        "settings",
+        (post) => post.displayName === `Jane ${tag}`,
+      ).some(
+        (post) =>
+          post.emails === "on" &&
+          post.digest === "off" &&
+          post.theme === "dark",
+      ),
+  },
+  {
+    name: "zoom",
+    hard: true,
+    zoom: 1.5,
+    prompt: (url, tag) =>
+      `On ${url("/calendar")}, book a table for "Jane ${tag}" on November 23 and tell me the confirmation.`,
+    // Every click on a day is recorded, so a missed click (a neighbouring day) fails the task even if a retry fixed it
+    check: (answer, h, tag) =>
+      recorded(h, "booking", (post) => post.name === `Jane ${tag}`).some(
+        (post) =>
+          post.day === "23" &&
+          post.clicks.split(" ").every((day) => day === "23") &&
+          has(answer, post._ref),
+      ),
+  },
+  {
+    name: "spa",
+    hard: true,
+    prompt: (url, tag) =>
+      `In the shop at ${url("/spa")}, find my order for the blue lamp, request a return for it because it arrived damaged, with the comment "Box crushed ${tag}". Tell me its tracking number and the return's reference.`,
+    check: (answer, h, tag) =>
+      recorded(
+        h,
+        "return",
+        (post) => post.comment === `Box crushed ${tag}`,
+      ).some(
+        (post) =>
+          post.order === "1042" &&
+          post.reason === "damaged" &&
+          has(answer, "TRK-88213", post._ref),
+      ),
+  },
+  {
+    name: "autocomplete",
+    hard: true,
+    prompt: (url, tag) =>
+      `On ${url(`/address?run=${tag}`)}, save the shipping address 12 King Street West, Toronto, Ontario (Canada).`,
+    check: (_answer, h, tag) =>
+      recorded(h, "address", (post) => post.run === tag).some(
+        (post) => post.city === "yyz" && has(post.street, "12 King Street"),
+      ),
+  },
+  {
+    name: "drag",
+    hard: true,
+    prompt: (url, tag) =>
+      `On ${url(`/board?run=${tag}`)}, move the card "Write docs" to the Done column.`,
+    check: (_answer, h, tag) => {
+      const moves = recorded(h, "board", (post) => post.run === tag);
+      return (
+        moves.length > 0 &&
+        moves.every((post) => post.card === "Write docs") &&
+        moves.at(-1)!.column === "Done"
+      );
+    },
+  },
+  {
+    name: "dialog",
+    hard: true,
+    prompt: (url, tag) =>
+      `On ${url(`/projects?run=${tag}`)}, delete the project "Old site" (only that one).`,
+    check: (_answer, h, tag) => {
+      const deleted = recorded(h, "delete", (post) => post.run === tag);
+      return deleted.length === 1 && deleted[0].project === "Old site";
+    },
+  },
+  {
+    name: "newtab",
+    hard: true,
+    prompt: (url) =>
+      `On ${url("/billing")}, open the March invoice and tell me the amount due.`,
+    check: (answer) => has(answer, "1,234.50"),
+  },
 ];
 
 type Result = {
@@ -107,16 +257,30 @@ type Result = {
   toolResultChars: number;
   cost: number;
   answer: string;
+  /** Each tool call and the start of its result, to see how a run went */
+  calls: { name: string; input: unknown; result: string }[];
   error?: string;
 };
 
 let h: Harness;
 const client = new Anthropic();
+/** Browsers at other zoom levels, for tasks that set one */
+const zoomed = new Map<number, Promise<Harness>>();
+const harnessFor = (zoom?: number) => {
+  if (!zoom) return Promise.resolve(h);
+  if (!zoomed.has(zoom)) zoomed.set(zoom, startHarness({ zoom }));
+  return zoomed.get(zoom)!;
+};
 
 beforeAll(async () => {
   h = await startHarness();
 });
-afterAll(() => h?.close());
+afterAll(async () => {
+  await Promise.all(
+    [...zoomed.values()].map(async (harness) => (await harness).close()),
+  );
+  await h?.close();
+});
 
 async function runOne(
   model: string,
@@ -124,6 +288,7 @@ async function runOne(
   task: Task,
   tag: string,
 ): Promise<Result> {
+  const h = await harnessFor(task.zoom);
   const { run, stop } = await config.start(h);
   const messages: Anthropic.MessageParam[] = [
     { role: "user", content: task.prompt(h.fixtures.url, tag) },
@@ -140,6 +305,7 @@ async function runOne(
     toolResultChars: 0,
     cost: 0,
     answer: "",
+    calls: [],
   };
   const [inPrice, outPrice] = PRICES[model] ?? [4, 20];
   const system = config.name.startsWith("cli")
@@ -184,12 +350,27 @@ async function runOne(
         let text: string;
         let isError = false;
         try {
-          text = await run(use.name, use.input as Record<string, unknown>);
+          // A tool that waits on a blocked page (an unanswered dialog) fails the call instead of hanging the run
+          let timer: NodeJS.Timeout | undefined;
+          text = await Promise.race([
+            run(use.name, use.input as Record<string, unknown>),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error("The tool call timed out after 60 s")),
+                60_000,
+              );
+            }),
+          ]).finally(() => clearTimeout(timer));
         } catch (error) {
           text = String((error as Error).message).split("\n")[0];
           isError = true;
         }
         result.toolResultChars += text.length;
+        result.calls.push({
+          name: use.name,
+          input: use.input,
+          result: text.slice(0, 600),
+        });
         results.push({
           type: "tool_result",
           tool_use_id: use.id,
@@ -247,6 +428,105 @@ it("runs scripted calls through every tool set", async () => {
     }
     await stop();
   }
+});
+
+/** The hard tasks can be solved, and their checks pass, with commands a model could write after one look at each page */
+it("solves the hard tasks with scripted commands", async () => {
+  type Call = string | ((last: string) => string);
+  const solutions: Record<
+    string,
+    (url: (path: string) => string, tag: string) => Call | Call[]
+  > = {
+    signup: (url, tag) => `goto ${url("/signup")}
+fill input[name=fullname] "Jane Doe ${tag}"
+fill input[name=email] "jane@acme.example"
+check input[value=business]
+fill input[name=company] "Acme ${tag}"
+select select[name=size] "11-50"
+select select[name=country] "Canada"
+select select[name=region] "Ontario"
+fill getByRole('row').nth(1).locator('input[name=member_name]') "Ann Lee"
+fill getByRole('row').nth(1).locator('input[name=member_email]') "ann@acme.example"
+select getByRole('row').nth(1).locator('select') "admin"
+click getByRole('button', { name: '+ Add row' })
+fill getByRole('row').nth(2).locator('input[name=member_name]') "Bob Ray"
+fill getByRole('row').nth(2).locator('input[name=member_email]') "bob@acme.example"
+check input[name=terms]
+click getByRole('button', { name: 'Create workspace' })
+get text h1`,
+    iframe: (url, tag) => `goto ${url("/checkout")}
+fill frameLocator('iframe').getByLabel('Name on card') "Jane Doe ${tag}"
+fill frameLocator('iframe').getByLabel('Card number') "4242424242424242"
+fill frameLocator('iframe').getByLabel('Expiry') "1228"
+fill frameLocator('iframe').getByLabel('CVC') "123"
+click frameLocator('iframe').getByRole('button', { name: 'Pay $42.00' })
+wait 1500
+get text frameLocator('iframe').getByRole('status')`,
+    shadow: (url, tag) => `goto ${url("/settings")}
+fill getByLabel('Display name') "Jane ${tag}"
+click getByRole('switch', { name: 'Email notifications' })
+click getByRole('switch', { name: 'Weekly digest' })
+click getByRole('button', { name: 'Theme: Light' })
+click getByRole('option', { name: 'Dark' })
+click getByRole('button', { name: 'Save changes' })
+wait --text "Settings saved"`,
+    zoom: (url, tag) => `goto ${url("/calendar")}
+fill getByLabel('Your name') "Jane ${tag}"
+click getByRole('button', { name: '23', exact: true })
+click getByRole('button', { name: 'Book' })
+wait --text "confirmation"
+get text #out`,
+    autocomplete: (url, tag) => `goto ${url(`/address?run=${tag}`)}
+fill getByLabel('Street') "12 King Street West"
+click getByLabel('City')
+type "Toro" --slowly
+wait getByRole('option', { name: 'Toronto, Ontario, Canada' })
+click getByRole('option', { name: 'Toronto, Ontario, Canada' })
+click getByRole('button', { name: 'Save address' })
+wait --text "Address saved"`,
+    drag: (url, tag) => `goto ${url(`/board?run=${tag}`)}
+drag getByText('Write docs') getByRole('region', { name: 'Done' })
+wait --text "Moved"`,
+    dialog: (url, tag) => [
+      `goto ${url(`/projects?run=${tag}`)}
+click getByRole('button', { name: 'Delete Old site', exact: true })`,
+      `dialog accept\nwait --text "Deleted"`,
+    ],
+    newtab: (url) => [
+      `goto ${url("/billing")}
+click getByRole('row', { name: /March/ }).getByRole('button', { name: 'View' })
+tab list`,
+      (last) =>
+        `tab select ${/(\d+)\D*Invoice INV-2041/.exec(last)?.[1]}\nget text main`,
+    ],
+    spa: (url, tag) => `goto ${url("/spa")}
+click getByRole('link', { name: 'Your orders' })
+click getByRole('link', { name: 'Order #1042' })
+wait --text "TRK-"
+get text main
+click getByRole('button', { name: 'Request a return' })
+select getByLabel('Reason') "damaged"
+fill getByLabel('Comment') "Box crushed ${tag}"
+click getByRole('button', { name: 'Submit return' })
+wait --text "reference"
+get text main`,
+  };
+  const failures: string[] = [];
+  for (const task of TASKS.filter((t) => t.hard)) {
+    const harness = await harnessFor(task.zoom);
+    const session = harness.openSession(`scripted-${task.name}`);
+    const tag = `s-${task.name}`;
+    let text = "";
+    for (const call of [solutions[task.name](harness.fixtures.url, tag)].flat())
+      text += await harness.run(
+        session,
+        typeof call === "string" ? call : call(text),
+      );
+    await harness.engine.closeSession(session);
+    if (!task.check(text, harness, tag))
+      failures.push(`${task.name}:\n${text}`);
+  }
+  if (failures.length) throw new Error(failures.join("\n\n"));
 });
 
 /**
@@ -369,10 +649,12 @@ it.skipIf(!process.env.ANTHROPIC_API_KEY)(
         !process.env.EVAL_CONFIGS ||
         process.env.EVAL_CONFIGS.split(",").includes(config.name),
     );
+    const wanted = process.env.EVAL_TASKS?.split(",");
     const tasks = TASKS.filter(
       (task) =>
-        !process.env.EVAL_TASKS ||
-        process.env.EVAL_TASKS.split(",").includes(task.name),
+        !wanted ||
+        wanted.includes(task.name) ||
+        wanted.includes(task.hard ? "hard" : "easy"),
     );
     const definitions: Record<string, number> = {};
     for (const config of configs)
