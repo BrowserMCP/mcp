@@ -10,6 +10,7 @@ Browser MCP's open-source core: the MCP server and the extension's browser contr
 ## Conventions
 
 - **On its own**: nothing here imports anything but these `@browsermcp/*` packages and npm packages, and a fresh clone must install, typecheck, test and build. Refer to other packages by name (`@browsermcp/mcp`), not by path.
+- **Public**: everything here is mirrored to a public repo, so nothing private goes in it: no secrets, links to private issues, PRs or dashboards, plans or paid features. Attach those through `extension-core`'s hooks (below).
 - **Protocol changes** go into both sides at once: the daemon (`@browsermcp/mcp`'s `src/relay/`) and `extension-core`. The protocol is versioned (`RELAY_PROTOCOL_VERSION`): each side tells the user which one to update when it meets an incompatible one.
 - **Extensions built on `extension-core`** pass what they add (analytics, review prompts) as hooks (`onEvent`, `onActivity`), so browser control itself sends nothing anywhere. Its popup messages go through its own `runtime.onMessage` listener, beside any the extension has.
 - **The popup's text**: the smoke test finds the popup's elements by their English text ("Allow", "Code: …", "Connected…", "Stop", "Resume", "In use"), so keep those, or change the test with them.
