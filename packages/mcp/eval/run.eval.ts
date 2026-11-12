@@ -479,7 +479,7 @@ get text #out`,
     autocomplete: (url, tag) => `goto ${url(`/address?run=${tag}`)}
 fill getByLabel('Street') "12 King Street West"
 click getByLabel('City')
-type "Toro" --slowly
+type "Toro"
 wait getByRole('option', { name: 'Toronto, Ontario, Canada' })
 click getByRole('option', { name: 'Toronto, Ontario, Canada' })
 click getByRole('button', { name: 'Save address' })

@@ -406,6 +406,8 @@ function isSleep(args: ParsedArgs) {
 }
 
 /** `goto` and `tab new <url>`: up to 30 s to commit, then 10 s to load */
+/** Longest text `type` sends key by key: each key is a round trip to the browser (through the extension, for the user's Chrome), so longer text is inserted at once, which fields that react to keys still see as one input */
+const TYPE_KEYS_MAX_CHARS = 200;
 const NAVIGATION_STEP_MS = 45_000;
 const BODY_TIMEOUT_MS = 10_000;
 
@@ -638,7 +640,7 @@ export const COMMANDS: CommandDef[] = [
   {
     name: "fill",
     usage: 'fill <target> "<text>" [--submit]',
-    help: "Replaces the field's value (input, textarea, contenteditable). --submit presses Enter after. The text isn't echoed back.",
+    help: "Replaces the field's value (input, textarea, contenteditable) at once, without key presses. For a field that reacts to typing (autocomplete, search as you type), click it and use type. --submit presses Enter after. The text isn't echoed back.",
     flags: { submit: false },
     maxArgs: 2,
     // With one argument, it may be the text with the target missing, so it isn't echoed
@@ -663,12 +665,13 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: "type",
-    usage: 'type "<text>" [--submit] [--slowly]   # into the focused element',
-    help: "Types into the focused element. --slowly sends one key at a time (for fields that react to keys), --submit presses Enter after. The text isn't echoed back.",
-    flags: { submit: false, slowly: false },
+    usage:
+      'type "<text>" [--submit] [--slowly] [--paste]   # key by key, into the focused element',
+    help: `Types into the focused element key by key, as a person would, so fields that react to keys (autocomplete, search as you type) respond. Text over ${TYPE_KEYS_MAX_CHARS} characters is inserted at once instead. --slowly waits between keys (for fields that drop fast keys), --paste inserts the text at once without key presses, --submit presses Enter after. The text isn't echoed back.`,
+    flags: { submit: false, slowly: false, paste: false },
     maxArgs: 1,
     echo: (args) =>
-      `type${args.flags.submit ? " --submit" : ""}${args.flags.slowly ? " --slowly" : ""}`,
+      `type${args.flags.submit ? " --submit" : ""}${args.flags.slowly ? " --slowly" : ""}${args.flags.paste ? " --paste" : ""}`,
     async run(ctx) {
       const page = await ctx.page();
       const text = positional(ctx.args, 0, '"<text>"');
@@ -683,8 +686,13 @@ export const COMMANDS: CommandDef[] = [
         );
       }
       await hiddenTabs.ensureVisible(page);
+      if (ctx.args.flags.slowly && ctx.args.flags.paste) {
+        throw new StepError("type takes --slowly or --paste, not both");
+      }
       if (ctx.args.flags.slowly) await page.keyboard.type(text, { delay: 30 });
-      else await page.keyboard.insertText(text);
+      else if (ctx.args.flags.paste || text.length > TYPE_KEYS_MAX_CHARS)
+        await page.keyboard.insertText(text);
+      else await page.keyboard.type(text);
       await fillLike(ctx, page, !!ctx.args.flags.submit);
     },
   },

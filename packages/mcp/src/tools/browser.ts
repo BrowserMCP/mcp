@@ -10,7 +10,7 @@ const EVERYDAY = [
   "goto <url> | back | forward | reload",
   "click <target>",
   'fill <target> "<text>" [--submit]',
-  'type "<text>"',
+  'type "<text>"   # key by key, into the focused field (autocomplete)',
   "press <key>",
   'select <target> "<value>"',
   "check <target> | uncheck <target>",

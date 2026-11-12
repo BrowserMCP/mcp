@@ -444,6 +444,32 @@ get text #sentinel`,
     );
   });
 
+  it("types key by key unless --paste or the text is long", async () => {
+    const s = session();
+    await h.run(
+      s,
+      `goto ${u("/form")}
+eval "() => { const el = document.querySelector('input[type=text], input:not([type])'); window.keys = 0; el.addEventListener('keyup', () => window.keys++); el.id = 'typed' }"
+click #typed`,
+    );
+    const typed = async (line: string) => {
+      await h.run(
+        s,
+        `eval "() => { window.keys = 0; document.querySelector('#typed').value = '' }"\n${line}`,
+      );
+      return h.run(
+        s,
+        `eval "() => [window.keys, document.querySelector('#typed').value.length]"`,
+      );
+    };
+    expect(await typed(`type "Toro"`)).toContain("[4,4]");
+    expect(await typed(`type "Toro" --paste`)).toContain("[0,4]");
+    expect(await typed(`type "${"a".repeat(201)}"`)).toContain("[0,201]");
+    expect(await h.run(s, `type "x" --slowly --paste`)).toContain(
+      "--slowly or --paste, not both",
+    );
+  });
+
   it("types into the focused element, presses keys and waits", async () => {
     const s = session();
     const text = await h.run(
