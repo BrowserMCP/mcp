@@ -196,10 +196,11 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
               buffer: Buffer.from(file.base64, "base64"),
             };
           },
-          async writeFile(path, data) {
+          async writeFile(path, data, options) {
             const result = await peer.request("writeFile", {
               path,
               base64: data.toString("base64"),
+              ...(options?.exclusive ? { exclusive: true } : {}),
             });
             return result.path;
           },

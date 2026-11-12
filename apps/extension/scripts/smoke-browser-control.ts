@@ -531,6 +531,30 @@ get text #out`,
     expect(Array.isArray(paired) && paired.length === 1, "pairing survives");
   });
 
+  await section("pdf and download, saved under the MCP root", async () => {
+    // In a background tab, as agents' tabs are
+    const result = await call(
+      alpha,
+      `goto ${fixtures.url("/files")}\npdf\ndownload getByRole('link', { name: 'Report (CSV)' })`,
+    );
+    const pdfFile = path.join(rootsDir, "Quarterly files.pdf");
+    const csvFile = path.join(rootsDir, "Q3 report.csv");
+    expect(
+      !result.isError &&
+        existsSync(pdfFile) &&
+        readFileSync(pdfFile).subarray(0, 5).toString() === "%PDF-",
+      result.text,
+    );
+    expect(
+      existsSync(csvFile) &&
+        readFileSync(csvFile, "utf8") ===
+          "region,revenue\nNorth,120\nSouth,95\n",
+      result.text,
+    );
+    copyFileSync(pdfFile, path.join(outDir, "agent-page.pdf"));
+    writeFileSync(path.join(outDir, "agent-files.txt"), result.text);
+  });
+
   const beta = await connectClient("smoke-beta", "Smoke Beta", { home });
   await section(
     "two AI apps, each with its own group in its own color",
@@ -1384,6 +1408,10 @@ more.onclick = () => requestAnimationFrame(() => new IntersectionObserver((entri
       // The SVG is not an `HTMLElement`, which `chrome.dom.openOrClosedShadowRoot()` throws on
       `<svg width="1" height="1"><path d="M0 0"/></svg><h1>A page with another extension's frame in a closed shadow root</h1>`,
     ),
+    "/files": page(
+      "Quarterly files",
+      `<h1>Quarterly report</h1><p style="background:#fde68a;padding:8px">Revenue grew in every region this quarter.</p><a href="/files/report.csv">Report (CSV)</a>`,
+    ),
     "/upload": page(
       "Upload",
       `<input type="file" id="file" onchange="out.textContent = this.files[0].name + ' ' + this.files[0].size"><p id="out"></p>`,
@@ -1412,6 +1440,15 @@ more.onclick = () => requestAnimationFrame(() => new IntersectionObserver((entri
           ),
         );
       });
+      return;
+    }
+    if (url.pathname === "/files/report.csv") {
+      res.setHeader("content-type", "text/csv");
+      res.setHeader(
+        "content-disposition",
+        'attachment; filename="Q3 report.csv"',
+      );
+      res.end("region,revenue\nNorth,120\nSouth,95\n");
       return;
     }
     if (url.pathname === "/api/data") {

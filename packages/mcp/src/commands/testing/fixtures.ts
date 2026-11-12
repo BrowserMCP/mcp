@@ -1,11 +1,17 @@
 /**
- * Fixture pages for the engine's tests, token budgets and the eval, served on 127.0.0.1 at a random port: a form like httpbin's, a list like Hacker News, a repo page like GitHub's, a login, a search with pages, a modal, a feed that loads more as it scrolls, and pages for scrolling, iframes, shadow DOM, dialogs, uploads, covered elements and popups.
+ * Fixture pages for the engine's tests, token budgets and the eval, served on 127.0.0.1 at a random port: a form like httpbin's, a list like Hacker News, a repo page like GitHub's, a login, a search with pages, a modal, a feed that loads more as it scrolls, and pages for scrolling, iframes, shadow DOM, dialogs, uploads, files to download, covered elements and popups.
  */
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
 const page = (title: string, body: string, head = "") =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title>${head}</head><body>${body}</body></html>`;
+
+/** A 1×1 PNG */
+const PIXEL_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  "base64",
+);
 
 const escape = (text: string) =>
   text.replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`);
@@ -155,6 +161,17 @@ const TESTS: Record<string, string> = {
     "Upload",
     `<label>File <input type="file" id="file" multiple onchange="document.getElementById('out').textContent=[...this.files].map(f=>f.name+':'+f.size).join(',')"></label><button onclick="document.getElementById('file').click()">Choose</button><p id="out"></p>`,
   ),
+  // Files to download: a CSV the server names, a JSON file a link names, an image, a file the page makes (a blob), a missing file, one over the size cap, and another origin's file (localhost, not 127.0.0.1) without CORS
+  "/files": page(
+    "Files",
+    `<h1>Files</h1><a href="/files/report">Report</a> <a href="/files/data" download="named.json">Data</a> <img src="/files/pixel.png" alt="Pixel"> <a id="blob" download="notes.txt">Notes</a> <a href="/files/missing.pdf">Missing</a> <a href="/files/big.bin">Big</a> <a id="other">Other origin</a> <button>Not a link</button>
+<script>document.getElementById('blob').href=URL.createObjectURL(new Blob(['made in the page'],{type:'text/plain'}));document.getElementById('other').href=location.origin.replace('127.0.0.1','localhost')+'/files/data'</script>`,
+  ),
+  // The Data link in an iframe on another origin (localhost), which only that frame can fetch
+  "/files-frame": page(
+    "Files in a frame",
+    `<iframe title="Files" style="width:600px;height:200px"></iframe><script>document.querySelector('iframe').src=location.origin.replace('127.0.0.1','localhost')+'/files'</script>`,
+  ),
   "/covered": page(
     "Covered",
     `<button id="target" onclick="this.textContent='clicked'">Under</button><div id="overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.2)"></div>`,
@@ -303,6 +320,24 @@ export async function serveFixtures(): Promise<{
           JSON.stringify({ ok: true, items: [1, 2, 3] }),
           "application/json",
         );
+      case "/files/report":
+        res.writeHead(200, {
+          "content-type": "text/csv",
+          "content-disposition": `attachment; filename="Q3 report.csv"; filename*=UTF-8''Q3%20report%20%E2%80%93%20final.csv`,
+        });
+        return res.end("month,total\nJuly,10\n");
+      case "/files/data":
+        return send(200, JSON.stringify({ ok: true }), "application/json");
+      case "/files/pixel.png":
+        res.writeHead(200, { "content-type": "image/png" });
+        return res.end(PIXEL_PNG);
+      case "/files/big.bin":
+        // Says it's over the cap; the client stops before reading it
+        res.writeHead(200, {
+          "content-type": "application/octet-stream",
+          "content-length": String(26 * 1024 * 1024),
+        });
+        return res.write(Buffer.alloc(1024));
       case "/favicon.ico":
         res.writeHead(204);
         return res.end();

@@ -1,5 +1,5 @@
 /** The engine against real headless Chromium (`LaunchedBackend`) and the fixture pages */
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   afterAll,
@@ -16,6 +16,8 @@ import { HIDDEN_TAB_MESSAGE, hiddenTabs } from "@/commands/hidden-tabs";
 import { type Harness, startHarness } from "@/commands/testing/harness";
 
 let h: Harness;
+const escapeRegExp = (text: string) =>
+  text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const u = (p: string) => h.fixtures.url(p);
 /** A new session (so a new tab) per test */
 const session = (capabilities: "cdp"[] = []) =>
@@ -555,6 +557,93 @@ get text getByRole('listitem').first()`,
     const [, width, height] = /(\d+)×(\d+) JPEG/.exec(text) ?? [];
     expect(Math.max(Number(width), Number(height))).toBeLessThanOrEqual(1568);
     expect(text).toContain(`saved to ${path.join(h.root, "shot.jpg")}`);
+  });
+
+  it("saves the page as a PDF, without overwriting a file it named itself", async () => {
+    const s = session();
+    await h.run(s, `goto ${u("/scroll")}`);
+    const first = await h.run(s, "pdf");
+    expect(first).toMatch(
+      new RegExp(
+        `✓ pdf — \\d+ pages, \\d+ KB, saved to ${escapeRegExp(path.join(h.root, "Scroll.pdf"))}`,
+      ),
+    );
+    expect(
+      readFileSync(path.join(h.root, "Scroll.pdf")).subarray(0, 5).toString(),
+    ).toBe("%PDF-");
+    expect(await h.run(s, "pdf")).toContain(
+      path.join(h.root, "Scroll (1).pdf"),
+    );
+    expect(await h.run(s, "pdf wide.pdf --landscape\npdf wide.pdf")).toContain(
+      `saved to ${path.join(h.root, "wide.pdf")}\n✓ pdf wide.pdf —`,
+    );
+  });
+
+  it("downloads files as the page would fetch them, naming them as a browser would", async () => {
+    const s = session();
+    await h.run(s, `goto ${u("/files")}`);
+    const saved = (name: string) =>
+      readFileSync(path.join(h.root, name), "utf8");
+    // The server's name (filename* first), the link's download name, the URL's last segment
+    expect(
+      await h.run(
+        s,
+        "download getByRole('link', { name: 'Report' })\ndownload getByRole('link', { name: 'Data' })\ndownload getByRole('img', { name: 'Pixel' })",
+      ),
+    )
+      .toBe(`✓ download getByRole('link', { name: 'Report' }) — 20 B text/csv, saved to ${path.join(h.root, "Q3 report – final.csv")}
+✓ download getByRole('link', { name: 'Data' }) — 11 B application/json, saved to ${path.join(h.root, "named.json")}
+✓ download getByRole('img', { name: 'Pixel' }) — 68 B image/png, saved to ${path.join(h.root, "pixel.png")}`);
+    expect(saved("Q3 report – final.csv")).toBe("month,total\nJuly,10\n");
+    expect(
+      readFileSync(path.join(h.root, "pixel.png")).subarray(1, 4).toString(),
+    ).toBe("PNG");
+    // A relative URL, again (so a new name), and to --path (overwriting)
+    expect(await h.run(s, "download /files/data")).toContain(
+      path.join(h.root, "data.json"),
+    );
+    expect(await h.run(s, "download ./files/data")).toContain(
+      path.join(h.root, "data (1).json"),
+    );
+    writeFileSync(path.join(h.root, "mine.json"), "old");
+    await h.run(s, "download /files/data --path mine.json");
+    expect(saved("mine.json")).toBe('{"ok":true}');
+    // A file the page made
+    expect(
+      await h.run(s, "download getByRole('link', { name: 'Notes' })"),
+    ).toContain(`text/plain, saved to ${path.join(h.root, "notes.txt")}`);
+    expect(saved("notes.txt")).toBe("made in the page");
+    // A CSS selector with a pseudo-class is a target, not a URL with the scheme a:
+    expect(await h.run(s, "download a:nth-of-type(2)")).toContain(
+      path.join(h.root, "named (1).json"),
+    );
+  });
+
+  it("downloads a link in another origin's iframe as that frame would", async () => {
+    const s = session();
+    await h.run(s, `goto ${u("/files-frame")}\nwait 500`);
+    const ref = /\[ref=(f\d+e\d+)\]/.exec(await h.run(s, 'find "Data"'))?.[1];
+    expect(ref).toBeDefined();
+    expect(await h.run(s, `download ${ref} --path framed.json`)).toContain(
+      `11 B application/json, saved to ${path.join(h.root, "framed.json")}`,
+    );
+  });
+
+  it("says why a download failed", async () => {
+    const s = session();
+    await h.run(s, `goto ${u("/files")}`);
+    expect(
+      await h.run(s, "download getByRole('link', { name: 'Missing' })"),
+    ).toContain(`— ${u("/files/missing.pdf")} answered 404 Not Found`);
+    expect(await h.run(s, "download /files/big.bin")).toContain(
+      "is over 25 MB (26 MB), the most download fetches",
+    );
+    expect(
+      await h.run(s, "download getByRole('link', { name: 'Other origin' })"),
+    ).toContain("for another site's file, CORS apply");
+    expect(
+      await h.run(s, "download getByRole('button', { name: 'Not a link' })"),
+    ).toContain("isn't a link and has no src");
   });
 });
 

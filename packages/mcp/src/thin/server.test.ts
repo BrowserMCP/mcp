@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -188,6 +189,17 @@ describe("createFileAccess", () => {
       name: "file.pdf",
       mimeType: "application/pdf",
     });
+  });
+
+  it("creates a file only if it isn't there when asked to, else overwrites", async () => {
+    const files = createFileAccess(async () => [root], home);
+    writeFileSync(path.join(root, "taken.txt"), "old");
+    await expect(
+      files.writeFile({ path: "taken.txt", base64: "eA==", exclusive: true }),
+    ).rejects.toThrow(/EEXIST/);
+    expect(readFileSync(path.join(root, "taken.txt"), "utf8")).toBe("old");
+    await files.writeFile({ path: "taken.txt", base64: "eA==" });
+    expect(readFileSync(path.join(root, "taken.txt"), "utf8")).toBe("x");
   });
 
   it("uses the working directory when the client has no roots", async () => {

@@ -21,7 +21,7 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 /**
- * The daemon's `readFile` / `writeFile` (for `upload` and `screenshot --path`). Any path on the machine works, as for the shell commands the agent runs with the user's permissions: `~` is the home directory, and relative paths resolve against the first of the AI app's MCP roots (its working directory when it has none)
+ * The daemon's `readFile` / `writeFile` (for `upload`, and `screenshot --path`, `pdf` and `download`). Any path on the machine works, as for the shell commands the agent runs with the user's permissions: `~` is the home directory, and relative paths resolve against the first of the AI app's MCP roots (its working directory when it has none)
  */
 export function createFileAccess(
   roots: () => Promise<string[]>,
@@ -50,10 +50,12 @@ export function createFileAccess(
         base64: data.toString("base64"),
       };
     },
-    async writeFile({ path: file, base64 }) {
+    async writeFile({ path: file, base64, exclusive }) {
       const absolute = await resolveFile(file);
       await mkdir(path.dirname(absolute), { recursive: true });
-      await writeFile(absolute, Buffer.from(base64, "base64"));
+      await writeFile(absolute, Buffer.from(base64, "base64"), {
+        flag: exclusive ? "wx" : "w",
+      });
       return { path: absolute };
     },
   };

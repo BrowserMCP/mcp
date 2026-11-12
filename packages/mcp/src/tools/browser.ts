@@ -29,6 +29,8 @@ export const MORE_COMMANDS = [
   "hover",
   "drag",
   "upload",
+  "download",
+  "pdf",
   "dialog",
   "console",
   "requests",

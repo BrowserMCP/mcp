@@ -83,9 +83,9 @@ export type DaemonToClientMethods = {
     params: { path: string };
     result: { name: string; mimeType: string; base64: string };
   };
-  /** For `screenshot --path`: writes a file (paths as for `readFile`) and returns its absolute path */
+  /** For `screenshot --path`, `pdf` and `download`: writes a file (paths as for `readFile`) and returns its absolute path. With `exclusive`, fails with EEXIST rather than overwrite a file (a thin process before 2.5 ignores it and overwrites) */
   writeFile: {
-    params: { path: string; base64: string };
+    params: { path: string; base64: string; exclusive?: boolean };
     result: { path: string };
   };
 };
@@ -196,7 +196,11 @@ export interface SessionIO {
   readFile(
     path: string,
   ): Promise<{ name: string; mimeType: string; buffer: Buffer }>;
-  writeFile(path: string, data: Buffer): Promise<string>;
+  writeFile(
+    path: string,
+    data: Buffer,
+    options?: { exclusive?: boolean },
+  ): Promise<string>;
 }
 
 /** The `browser` tool and its sessions. Created once per daemon */

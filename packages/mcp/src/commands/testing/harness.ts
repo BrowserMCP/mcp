@@ -23,9 +23,9 @@ export function rootedIO(root: string): SessionIO {
         buffer: readFileSync(full),
       };
     },
-    async writeFile(file, data) {
+    async writeFile(file, data, options) {
       const full = resolve(file);
-      writeFileSync(full, data);
+      writeFileSync(full, data, { flag: options?.exclusive ? "wx" : "w" });
       return full;
     },
   };

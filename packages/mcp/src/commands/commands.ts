@@ -27,6 +27,7 @@ import {
   StepError,
 } from "@/commands/output";
 import type { FlagSpec, ParsedArgs, Token } from "@/commands/parser";
+import { download, DOWNLOAD_MAX_BYTES, pdf } from "@/commands/save";
 import {
   find,
   findByRef,
@@ -1033,6 +1034,25 @@ export const COMMANDS: CommandDef[] = [
     flags: { full: false, path: true },
     maxArgs: 1,
     run: screenshot,
+  },
+  {
+    name: "pdf",
+    usage: "pdf [<path>] [--landscape]   # saves the page as a PDF",
+    help: "Prints the page to a PDF, as Chrome's Save as PDF does (print styles, backgrounds, the page size the page's CSS sets), and saves it to <path> (or --path), overwriting an existing file. Without <path>, it saves <page title>.pdf in your MCP root (or working directory), adding (1), (2)… rather than overwrite. Paths: absolute, under ~, or relative to your MCP root.",
+    flags: { landscape: false, path: true },
+    maxArgs: 1,
+    timeoutMs: () => TIMEOUT_MAX_MS,
+    run: pdf,
+  },
+  {
+    name: "download",
+    usage:
+      "download <url>|<target> [--path <file>]   # fetches a file as the page would",
+    help: `Fetches a file in the page, as its own scripts would (its cookies; another site's file needs CORS), and saves it. Takes a URL (absolute, or relative to the page: /, ./, ../, ?) or a link, image or media element (a ref or locator), whose href or src it fetches. Up to ${DOWNLOAD_MAX_BYTES / 1024 / 1024} MB. Saves to --path, overwriting an existing file, else under the server's file name, the link's download name or the URL's last segment in your MCP root (or working directory), adding (1), (2)… rather than overwrite. Doesn't click or open Chrome's downloads; for a file only a click produces, find its URL with \`requests\` or \`get attr href <target>\`.`,
+    flags: { path: true },
+    maxArgs: 1,
+    timeoutMs: () => TIMEOUT_MAX_MS,
+    run: download,
   },
   {
     name: "eval",
