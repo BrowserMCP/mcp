@@ -5,6 +5,7 @@ import { KeyRoundIcon, PauseIcon, PlayIcon } from "lucide-react";
 import {
   type ConnectionStatus,
   sendBrowserControlMessage,
+  type TabAccessView,
   TAB_GROUP_HEX,
   TAB_GROUP_TEXT,
   useBrowserControl,
@@ -52,6 +53,18 @@ export function BrowserControlPanel() {
           run(() => sendBrowserControlMessage("allowDaemon", { publicKey }))()
         }
       />
+
+      {paired && view.tabAccess.restricted && (
+        <TabAccessPanel
+          access={view.tabAccess}
+          onEnable={(tabId) =>
+            run(() => sendBrowserControlMessage("enableTab", { tabId }))()
+          }
+          onDisable={(tabId) =>
+            run(() => sendBrowserControlMessage("disableTab", { tabId }))()
+          }
+        />
+      )}
 
       {paired && (
         <section
@@ -143,6 +156,87 @@ export function BrowserControlPanel() {
         )}
       </div>
     </div>
+  );
+}
+
+/** How long a tab stays enabled, as "5 min left" */
+function timeLeft(expiresAt: number): string {
+  const minutes = Math.max(1, Math.ceil((expiresAt - Date.now()) / 60_000));
+  return `${minutes} min left`;
+}
+
+/**
+ * When agents get only the tabs the user enables: the tabs that are, and the button to enable or disable the one in front of the user
+ */
+function TabAccessPanel({
+  access,
+  onEnable,
+  onDisable,
+}: {
+  access: TabAccessView;
+  onEnable: (tabId: number) => void;
+  onDisable: (tabId: number) => void;
+}) {
+  const { currentTab, enabledTabs } = access;
+
+  return (
+    <>
+      <section
+        aria-labelledby="browser-control-enabled"
+        className="space-y-2 border-b px-4 py-3"
+      >
+        <h2
+          id="browser-control-enabled"
+          className="text-xs font-medium text-muted-foreground"
+        >
+          Enabled tabs
+        </h2>
+        {enabledTabs.length === 0 ? (
+          <p className="text-muted-foreground">
+            No tabs are enabled. AI apps can use only the tabs they open.
+          </p>
+        ) : (
+          <ul className="space-y-1">
+            {enabledTabs.map((tab) => (
+              <li key={tab.tabId} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1" title={tab.url}>
+                  <span className="block truncate">{tab.title}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {timeLeft(tab.expiresAt)}
+                  </span>
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label={`Disable ${tab.title}`}
+                  onClick={() => onDisable(tab.tabId)}
+                >
+                  Disable
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {currentTab?.canEnable && (
+        <div className="border-b px-4 py-3">
+          {currentTab.enabledUntil !== null ? (
+            <Button
+              size="wide"
+              variant="outline"
+              onClick={() => onDisable(currentTab.tabId)}
+            >
+              Disable control for this tab
+            </Button>
+          ) : (
+            <Button size="wide" onClick={() => onEnable(currentTab.tabId)}>
+              Enable control for this tab
+            </Button>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 

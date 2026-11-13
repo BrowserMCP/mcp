@@ -55,6 +55,36 @@ export const pairedDaemonKeysItem = storage.defineItem<string[]>(
   { fallback: [] },
 );
 
+/** Whether credentials in the headers and cookies of CDP events (cookie, authorization, CSRF tokens) are redacted in the browser, before they reach the daemon. On unless the user turns it off in the popup's settings */
+export const redactHeadersItem = storage.defineItem<boolean>(
+  "local:redactHeaders",
+  { fallback: true },
+);
+
+/** Whether agents get only the tabs the user enabled (and the tabs agents opened or the user put in an AI app's group), instead of every tab. Off unless the user turns it on in the popup's settings */
+export const restrictTabsItem = storage.defineItem<boolean>(
+  "local:restrictTabs",
+  { fallback: false },
+);
+
+/** How many minutes **Enable for this tab** lasts, when tabs are restricted */
+export const defaultGrantMinutesItem = storage.defineItem<number>(
+  "local:defaultGrantMinutes",
+  { fallback: 60 },
+);
+
+/** The tabs the user enabled, by tab ID, with when each stops being enabled (ms since the epoch). In `storage.session`, like the tab IDs themselves */
+export const tabGrantsItem = storage.defineItem<Record<string, number>>(
+  "session:browserControlTabGrants",
+  { fallback: {} },
+);
+
+/** The tabs agents opened themselves (`createTab`, and the tabs those open), by tab ID. They're the agent's own, so they stay usable when tabs are restricted. Grouping a tab (`groupTab`) never adds one: the agent could otherwise keep any tab it was ever given. In `storage.session`, like the tab IDs */
+export const agentTabsItem = storage.defineItem<number[]>(
+  "session:browserControlAgentTabs",
+  { fallback: [] },
+);
+
 /** The daemon's port when it runs with `--port`, set by hand (e.g. `chrome.storage.local.set({ relayPort: 9123 })` in the service worker's console) or by tests. Only that port is tried then; otherwise `RELAY_PORTS` */
 export const relayPortItem = storage.defineItem<number | null>(
   "local:relayPort",

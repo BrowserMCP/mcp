@@ -230,6 +230,8 @@ export type ExtensionState = {
   paused: boolean;
   /** `pending` until the user clicks **Allow** for this daemon's key; `tabs` is empty and every request fails meanwhile */
   pairing: "paired" | "pending";
+  /** Present only when the user limited agents to the tabs they enable: how many other tabs are open that agents may not use yet (`tabs` lists only the usable ones). A count, never their titles or URLs */
+  restricted?: { hiddenTabs: number };
   /** The name the user gave this browser profile in the popup's settings, e.g. `Work`. Absent until they set one, when the daemon names it after `BrowserInfo.name` (`Chrome 2`). Agents see it only while several browsers are connected. Like `tabs`, only sent once paired: never in `hello`'s state, so a program on the port can't read it */
   label?: string;
   /** When a normal window of this browser profile last gained focus (`chrome.windows.onFocusChanged`, ms since the epoch), so the daemon opens agents' new tabs in the browser the user used last. Absent until one has. Only sent once paired, like `label` */

@@ -67,10 +67,12 @@ export type ExposureRules = {
   fileAccess: boolean;
   /** The user turned on "Allow in Incognito" for the extension (`extension.isAllowedIncognitoAccess()`) */
   incognitoAccess: boolean;
+  /** The tabs agents may use when the user restricted them to the tabs they enabled, or `null` when every tab may be used */
+  allowedTabIds: ReadonlySet<number> | null;
 };
 
 /**
- * Whether agents may use the tab: every tab except incognito ones (unless the user allowed the extension in incognito), discarded ones (commands sent to them hang) and the pages `isExposedUrl()` leaves out, in its URL or the one it's loading
+ * Whether agents may use the tab: every tab (or, when the user restricted agents to the tabs they enabled, only those) except incognito ones (unless the user allowed the extension in incognito), discarded ones (commands sent to them hang) and the pages `isExposedUrl()` leaves out, in its URL or the one it's loading
  */
 export function isExposedTab(
   tab: Browser.tabs.Tab,
@@ -80,6 +82,7 @@ export function isExposedTab(
     tab.id !== undefined &&
     // `tabs.TAB_ID_NONE`: tabs that aren't browser tabs, e.g. DevTools
     tab.id !== -1 &&
+    (rules.allowedTabIds === null || rules.allowedTabIds.has(tab.id)) &&
     (!tab.incognito || rules.incognitoAccess) &&
     !tab.discarded &&
     getTabUrls(tab).every((url) => isExposedUrl(url, rules.fileAccess))

@@ -140,6 +140,8 @@ export interface BrowserBackend {
   findTab(tabId: number): Promise<BackendTab | undefined>;
   /** Whether the tab is known to be closed: its browser is connected and paired and doesn't report it. False while its browser is away (e.g. its service worker restarting) or waits for **Allow**, which doesn't mean the tab closed */
   tabClosed(tabId: number): boolean;
+  /** When the user limited agents to the tabs they enable: how many other tabs are open that they may not use yet. `null` when every tab is available */
+  restriction?(): { hiddenTabs: number } | null;
 
   /** Opens a background tab in the app's group, in `browser` (a `BrowserSummary.id`), or by default in the usable browser focused last. Doesn't attach the debugger */
   createTab(options: {

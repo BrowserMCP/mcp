@@ -565,6 +565,16 @@ export class RelayBackend implements BrowserBackend {
     return find();
   }
 
+  /** When a connected browser limited agents to the tabs they enable: how many other tabs are open that they may not use yet, across those browsers. `null` when every tab is available */
+  restriction(): { hiddenTabs: number } | null {
+    const hidden = this.connectedSlots().reduce(
+      (count, slot) =>
+        count + (slot.connection?.state.restricted?.hiddenTabs ?? 0),
+      0,
+    );
+    return hidden > 0 ? { hiddenTabs: hidden } : null;
+  }
+
   tabClosed(tabId: number): boolean {
     const ref = this.refs.get(tabId);
     if (!ref) {
