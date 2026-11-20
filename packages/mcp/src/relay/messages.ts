@@ -5,6 +5,10 @@ const HOME_PAGE = "https://browsermcp.io";
 export const PAUSED_MESSAGE =
   "The user paused Browser MCP. Ask them to click Resume in its popup";
 
+/** No browser is connected, but one disconnected a moment ago and comes back by itself */
+export const RECONNECTING_MESSAGE =
+  "The browser is reconnecting to Browser MCP. Try again in a moment";
+
 export const UPDATE_EXTENSION_MESSAGE = `The Browser MCP extension is outdated. Update it: open chrome://extensions, turn on Developer mode and click Update, then accept the new permission Chrome asks for. Steps: ${HOME_PAGE}`;
 
 export const UPDATE_SERVER_MESSAGE = `The Browser MCP extension is newer than this server. Use @browsermcp/mcp@latest in the AI app's MCP config and restart the AI app. Steps: ${HOME_PAGE}`;

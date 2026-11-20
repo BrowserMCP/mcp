@@ -9,11 +9,9 @@ import {
   vi,
 } from "vitest";
 
-import { NO_EXTENSION_MESSAGE } from "@browsermcp/protocol";
-
 import { createCommandEngine } from "@/commands/engine";
 import type { BackendEvents } from "@/contracts";
-import { PAUSED_MESSAGE } from "@/relay/messages";
+import { PAUSED_MESSAGE, RECONNECTING_MESSAGE } from "@/relay/messages";
 import { FakeChromium, FakeExtension } from "@/testing/fake-extension";
 import { startFixtureServer } from "@/testing/fixture-server";
 import { startTestBackend } from "@/testing/test-backend";
@@ -181,7 +179,8 @@ describe("the bridge with Playwright", () => {
     await extension.disconnect();
     await vi.waitUntil(() => !relay.backend.connected);
     expect(released).toContainEqual({ tabId, reason: "disconnected" });
-    expect(relay.backend.unavailableReason()).toBe(NO_EXTENSION_MESSAGE);
+    // The extension reconnects by itself, so the model is told that rather than to install it
+    expect(relay.backend.unavailableReason()).toBe(RECONNECTING_MESSAGE);
     await vi.waitUntil(() => page.isClosed());
 
     // Reconnecting (e.g. after a service-worker restart) works again
