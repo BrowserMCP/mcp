@@ -108,6 +108,24 @@ describe("RelayBackend", () => {
     expect(connections).toEqual([true]);
   });
 
+  it("waits for the extension's first state instead of asking for Allow", async () => {
+    // The extension sends `hello` with `pairing: "pending"` and its real state 1.5 s later, as the real one does while it checks the daemon's key
+    await connect({ firstStateDelayMs: 1500 });
+    const tabId = await relay.backend.createTab({
+      url: "about:blank",
+      app: { id: "claude-code", name: "Claude Code" },
+    });
+    expect(tabId).toBeGreaterThan(0);
+    expect(relay.backend.unavailableReason()).toBeNull();
+  });
+
+  it("says the browser is reconnecting right after it disconnects", async () => {
+    const extension = await connect();
+    await extension.close();
+    await vi.waitUntil(() => !relay.backend.connected);
+    expect(relay.backend.unavailableReason()).toMatch(/reconnecting/i);
+  });
+
   it("signs the extension's challenge with its key (verified with WebCrypto)", async () => {
     const extension = await connect();
     expect(await extension.verifyWelcome()).toBe(true);

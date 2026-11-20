@@ -199,6 +199,10 @@ export type FakeExtensionOptions = {
   windowId?: number;
   /** `state.label`, the name the user gave the profile */
   label?: string;
+  /**
+   * Delay the first `state` by this long, and send `hello` with `{ tabs: [], paused, pairing: "pending" }` as the real extension does (it tells the daemon nothing about the user until the daemon proves a key they allowed). Models a call made in the window before the extension's first `state` lands
+   */
+  firstStateDelayMs?: number;
 };
 
 /**
@@ -319,15 +323,21 @@ export class FakeExtension {
       capabilities: ["tabOpened"],
       challenge: extension.challenge,
       // Like the real extension, no label or focus in `hello`: they come in the first `state` after `welcome`
-      state: {
-        ...extension.state(),
-        label: undefined,
-        lastFocusedAt: undefined,
-      },
+      state:
+        options.firstStateDelayMs === undefined
+          ? {
+              ...extension.state(),
+              label: undefined,
+              lastFocusedAt: undefined,
+            }
+          : { tabs: [], paused: false, pairing: "pending" },
     });
     extension.welcome = await welcome;
     ws.on("message", (data) => void extension.onDaemonMessage(data.toString()));
-    if (extension.label || extension.lastFocusedAt) {
+    if (options.firstStateDelayMs !== undefined) {
+      setTimeout(() => extension.sendState(), options.firstStateDelayMs);
+    } else {
+      // As the real extension's `onWelcome` does once the daemon proved its key
       extension.sendState();
     }
     if (extension.pairing === "pending" && options.pairingNonce !== false) {

@@ -30,6 +30,7 @@ import {
   noSuchBrowserMessage,
   noSuchTabMessage,
   PAUSED_MESSAGE,
+  RECONNECTING_MESSAGE,
   TAB_DETACHED_MESSAGE,
   tooManyBrowsersReason,
   UPDATE_EXTENSION_MESSAGE,
@@ -61,6 +62,9 @@ type Listeners = {
 
 /** A public tab ID's browser and Chrome tab ID */
 type TabRef = { slot: BrowserSlot; tabId: number };
+
+/** How long after the daemon starts, or a browser disconnects, `whenReady()` waits for it to (re)connect. The extension retries every 1–5 s */
+const RECONNECT_GRACE_MS = 10_000;
 
 /** How long a refused extension is named in `unavailableReason()`: it retries every 1–5 s */
 const REJECTED_EXTENSION_MS = 30_000;
@@ -492,16 +496,33 @@ export class RelayBackend implements BrowserBackend {
       if (this.lastProblem === "update-server") {
         return UPDATE_SERVER_MESSAGE;
       }
+      // A browser that disconnected a moment ago reconnects by itself: don't tell the model to install the extension
+      if (this.disconnectExpected()) {
+        return RECONNECTING_MESSAGE;
+      }
       return NO_EXTENSION_MESSAGE;
     }
     if (
       connected.every((slot) => slot.connection!.state.pairing === "pending")
     ) {
+      // `hello` says `pending` for every browser while the extension checks the daemon's key; its first `state` says what the user allowed
+      if (connected.every((slot) => !slot.stateReceived)) {
+        return null;
+      }
       return connected
         .map((slot) => this.named(slot, this.pairingMessage(slot)))
         .join("\n");
     }
     return null;
+  }
+
+  /** Whether a browser that disconnected less than the grace ago is expected back (the extension retries every 1–5 s) */
+  private disconnectExpected(): boolean {
+    const grace = this.options.reconnectGraceMs ?? RECONNECT_GRACE_MS;
+    const now = Date.now();
+    return this.slots.some(
+      (slot) => !slot.connection && now < slot.disconnectedAt + grace,
+    );
   }
 
   async whenReady(tabId?: number | null): Promise<void> {
@@ -582,7 +603,7 @@ export class RelayBackend implements BrowserBackend {
     app: AppInfo;
     browser?: string;
   }): Promise<number> {
-    const slot = this.usableSlot(options.browser);
+    const slot = await this.usableSlot(options.browser);
     const connection = slot.connection!;
     const { tabId } = await connection.request("createTab", {
       url: options.url,
@@ -786,6 +807,8 @@ export class RelayBackend implements BrowserBackend {
   private async usableTab(
     tabId: number,
   ): Promise<TabRef & { connection: ExtensionConnection }> {
+    // A call right after the browser connected arrives before its first `state`, whose `hello` says `pending` for every browser
+    await this.whenReady(tabId);
     const reason = this.unavailableReason();
     if (reason && !this.connected) {
       throw new Error(reason);
@@ -820,8 +843,9 @@ export class RelayBackend implements BrowserBackend {
   }
 
   /** The browser `createTab()` opens in: `browser` (an ID), or by default `defaultSlot()`. Throws the message the model should see when it can't be used */
-  private usableSlot(browser?: string): BrowserSlot {
+  private async usableSlot(browser?: string): Promise<BrowserSlot> {
     if (!browser) {
+      await this.whenReady();
       const reason = this.unavailableReason();
       if (reason) {
         throw new Error(reason);
@@ -846,9 +870,16 @@ export class RelayBackend implements BrowserBackend {
       );
     }
     if (state.pairing === "pending") {
+      await this.whenReady();
+    }
+    const settled = slot.connection?.state;
+    if (!settled) {
+      throw new Error(browserDisconnectedMessage(slot.label));
+    }
+    if (settled.pairing === "pending") {
       throw new Error(this.named(slot, this.pairingMessage(slot)));
     }
-    if (state.paused) {
+    if (settled.paused) {
       throw new Error(this.named(slot, PAUSED_MESSAGE));
     }
     return slot;
